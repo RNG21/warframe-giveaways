@@ -1,0 +1,6 @@
+config.json
+test.py
+.idea
+Dockerfile
+venv
+__pycache__

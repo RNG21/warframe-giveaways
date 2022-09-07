@@ -4,7 +4,7 @@ import asyncio
 import json
 import traceback
 import random
-from typing import List
+from typing import List, Iterable
 
 import discord
 from discord.ext import tasks, commands
@@ -13,9 +13,13 @@ import discord_templates as template
 import mongodb
 import parse_commands as parse
 
+collection = mongodb.Collection(mongodb.Cloud)
+with open('config.json', encoding='utf-8') as file:
+    thread_channel_id = json.load(file)['pickup_channel_id']
 
-class NotUser(Exception):
-    pass
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Giveaways(bot))
 
 
 class DuplicateUnit(Exception):
@@ -49,7 +53,7 @@ class Giveaway(object):
             holder: template.Holder = None,
             display_holder: bool = None,
             prize: str = None,
-            display_title: bool = None,
+            display_title: bool = False,
             message: discord.Message = None,
             row: str = None
     ):
@@ -66,13 +70,15 @@ class Giveaway(object):
 
 class Giveaways(commands.Cog):
     check_end_interval = 5
+    bot: commands.Bot
 
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.owner = None
         self.setup_done = False
         self.pending_end = {}
         self.delete_giveaway = {}
+        self.thread_channel = None
 
     @commands.command(name='edit_giveaway')
     async def edit_giveaway(self, ctx):
@@ -127,7 +133,7 @@ class Giveaways(commands.Cog):
         # Compute and validate duration
         duration = args[0]
         if duration.isdigit():
-            giveaway.duration = int(duration)
+            duration = int(duration)
         else:
             try:
                 duration = __to_seconds__(duration)
@@ -151,18 +157,14 @@ class Giveaways(commands.Cog):
         # Find holder
         try:
             warnings_ = await self.__find_holder__(ctx, giveaway)
-        except NotUser as error:
+        except template.NotUser as error:
             return await ctx.channel.send(embed=template.error(str(error)))
         for warning in warnings_:
-            await ctx.channel.send(embed=warning)
+            await ctx.channel.send(embed=template.warning(warning))
 
         # Find prize
-        if len(args) >= 4:
-            giveaway.prize = args[3]
-            giveaway.display_title = True
-        else:
-            __find_prize__(giveaway)
-        if (len(giveaway.prize) > 256) and giveaway.display_title:
+        __find_prize__(giveaway)
+        if len(giveaway.prize) > 256:
             giveaway.prize = giveaway.prize[:256]
             await ctx.channel.send(
                 content=ctx.author.mention,
@@ -177,9 +179,8 @@ class Giveaways(commands.Cog):
                     winners=giveaway.winners,
                     holder=giveaway.holder,
                     description=giveaway.description,
-                    display_holder=giveaway.display_holder,
-                    display_title=giveaway.display_title,
-                    prize=giveaway.prize
+                    prize=giveaway.prize,
+                    display_title=giveaway.display_title
                 )
             )
             await giveaway.message.add_reaction('🎉')
@@ -211,15 +212,18 @@ class Giveaways(commands.Cog):
             'ending': giveaway.duration,
             'prize': giveaway.prize,
             'winners': giveaway.winners,
-            'holder_mention': giveaway.holder.mention,
-            'holder_tag': giveaway.holder.tag,
+            'holder': {
+                'mention': giveaway.holder.mention,
+                'tag': giveaway.holder.tag,
+                'string': giveaway.holder.string
+            },
             'path': f'{server_id}/{channel_id}/{message_id}'
         }
         if giveaway.duration > self.check_end_interval * 60 + time.time():
-            mongodb.insert(document)
+            collection.insert(document)
         # else start process (and add entry to db for redundancy)
         else:
-            mongodb.insert(document)
+            collection.insert(document)
             asyncio.create_task(self.end_giveaway(document))
 
         try:
@@ -227,7 +231,7 @@ class Giveaways(commands.Cog):
         except discord.errors.Forbidden:
             pass
 
-    async def __find_holder__(self, ctx: commands.Context, giveaway: Giveaway) -> List[discord.Embed]:
+    async def __find_holder__(self, ctx: commands.Context, giveaway: Giveaway) -> List[str]:
         """
         Determines the holder from a giveaway description
 
@@ -237,7 +241,6 @@ class Giveaways(commands.Cog):
         """
         # Initialise
         holder = template.Holder()
-        warnings_ = []
 
         # Find user mention/id/tag
         id_lengths = range(19, 16, -1)  # large to small to match the longest id first
@@ -245,13 +248,14 @@ class Giveaways(commands.Cog):
                   '(<@\d{' + f'{id_lengths[-1]},{id_lengths[0]}' + '}>)' \
                   '|(' + '|'.join([r'\d{' + str(id_) + '}' for id_ in id_lengths]) + '))' \
                   '|(?:[\n_~*`]+contact(?::)? (.{2,32}#\d{4}))'
-        re_match = re.search(pattern, giveaway.description, flags=re.IGNORECASE)
+        re_match = re.search(pattern, giveaway.description, flags=re.IGNORECASE )
 
         # Set holder to author if none found
         if re_match is None:
             giveaway.display_holder = True
             holder.mention = ctx.author.mention
             holder.tag = str(ctx.author)
+            holder.string = f'Hosted by: {holder.tag}'
 
         # Define holder.mention or holder.tag
         else:
@@ -259,43 +263,28 @@ class Giveaways(commands.Cog):
             mention, id_, tag = re_match.groups()
             if mention:
                 holder.mention = mention
+                span = re_match.span(1)
             elif id_:
                 # Replace id with mention
                 holder.mention = f'<@{id_}>'
                 span = re_match.span(2)
-                giveaway.description = giveaway.description[:span[0]] + holder.mention + giveaway.description[span[1]:]
             elif tag:
                 holder.tag = tag
+                span = re_match.span(3)
+            holder.string = f'Contact {holder.tag} to claim your prize'
 
         # Get member object
-        try:
-            if holder.mention:
-                member = await commands.MemberConverter().convert(ctx, holder.mention)
-            else:
-                member = await commands.MemberConverter().convert(ctx, holder.tag)
-        except (commands.CommandError, commands.BadArgument):
-            member = None
-            # if member intents not enabled
-            if holder.mention:
-                try:
-                    # Fetch within guild members
-                    member = await ctx.guild.fetch_member(int(holder.mention[2:-1]))
-                except discord.NotFound:
-                    try:
-                        # Fetch user
-                        member = await self.bot.fetch_user(int((holder.mention[2:-1])))
-                    except discord.NotFound:
-                        raise NotUser(f'{holder.mention} is not user!')
-                    warnings_.append(template.warning(f'{holder.mention} is not member of the server!'))
-            # Cannot fetch from api with user tag
-            else:
-                warnings_.append(template.warning(f'Cannot convert `{holder.tag}` to server member'))
+        if holder.mention:
+            user_id = holder.mention[2:-1]
+        else:
+            user_id = None
+
+        member, warnings_ = await template.get_member(bot=self.bot, ctx=ctx, user_id=user_id, user_tag=holder.tag)
 
         # if member successfully retrieved:
         if (member is not None) and (not giveaway.display_holder):
-            if holder.tag:  # Replace user tag with mention in description
-                span = re_match.span(3)
-                giveaway.description = giveaway.description[:span[0]] + member.mention + giveaway.description[span[1]:]
+            if not warnings_:  # warning if member not in guild, will not be in user cache therefore display tag
+                giveaway.description = giveaway.description[:span[0]] + str(member) + giveaway.description[span[1]:] # noqa
             # Populate both holder.tag and holder.id
             holder.mention = member.mention
             holder.tag = str(member)
@@ -322,24 +311,22 @@ class Giveaways(commands.Cog):
 
         # return if giveaway was deleted during above sleep
         if document['_id'] in self.delete_giveaway:
-            mongodb.delete(document['_id'])
+            __archive_giveaway__(document['_id'], document)
             return
 
-        server_id, channel_id, message_id = document['path'].split('/')
+        server_id, channel_id, message_id = [int(_id) for _id in document['path'].split('/')]
         jump_url = f'https://discord.com/channels/{document["path"]}'
         # Get channel
-        channel = self.bot.get_channel(channel_id)
-        if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channel_id)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException, discord.InvalidData) as error:
-                mongodb.delete(document['_id'])
-                return self.owner.send(
-                    embed=template.error(
-                        f'{type(error).__name__}\n```{document}```'
-                        f'[Jump]({jump_url})'
-                    )
+        try:
+            channel = await template.get_channel(self.bot, channel_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, discord.InvalidData) as error:
+            __archive_giveaway__(document['_id'], document)
+            return self.owner.send(
+                embed=template.error(
+                    f'{type(error).__name__}\n```{document}```'
+                    f'[Jump]({jump_url})'
                 )
+            )
 
         # Get giveaway message
         try:
@@ -347,7 +334,7 @@ class Giveaways(commands.Cog):
         # if message not found try sending error message to channel
         except discord.NotFound:
             try:
-                mongodb.delete(document['_id'])
+                __archive_giveaway__(document['_id'], document)
                 return await channel.send(
                     embed=template.error(
                         'Hmm I can\'t seem to find a giveaway that\'s supposed to end at this time\n'
@@ -357,14 +344,14 @@ class Giveaways(commands.Cog):
                 )
             # if no perm to send error message, send to owner
             except discord.Forbidden:
-                mongodb.delete(document['_id'])
+                __archive_giveaway__(document['_id'], document)
                 return await self.owner.send(f'Forbidden on sending following error\n'
                                              f'Giveaway not found\n```{document}```')
         # Catch all other errors on fetching message
         except Exception as error:
             tb = traceback.format_exception(type(error), error, error.__traceback__)
             tb_str = ''.join(tb[:-1]) + f'\n{tb[-1]}'
-            mongodb.delete(document['_id'])
+            __archive_giveaway__(document['_id'], document)
             return await self.owner.send(f'```json\n{json.dumps(document, indent=4, ensure_ascii=False)}```',
                                          embed=template.error(f'Failed to end giveaway\n```{tb_str}```'))
 
@@ -378,6 +365,9 @@ class Giveaways(commands.Cog):
                         embed.set_field_at(i, name='Ended:', value=field.value)
             embed.colour = None
             await message.edit(embed=embed)
+        else:
+            __archive_giveaway__(document['_id'], document)
+            return await channel.send(embed=template.no_winner(jump_url, '**Warning:**\nEmbed on giveaway was deleted'))
 
         # Determine winner
         winners = []
@@ -394,53 +384,75 @@ class Giveaways(commands.Cog):
                     winners.append(reacted_users[random_index])
                     reacted_users.pop(random_index)
         if not winners:
-            mongodb.delete(document['_id'])
+            __archive_giveaway__(document['_id'], document)
             return await channel.send(embed=template.no_winner(jump_url))
 
         # Send result
-        holder = template.Holder(document['holder_mention'], document['holder_tag'])
-        mongodb.delete(document['_id'])
-        giveaway_result = template.giveaway_result(
+        GIVEAWAY_CHANNELS = (
+            718707589390663710,  # pc grand
+            487801480380809227,  # pc general
+            898527533191020544,  # pc riven
+            703199049863528459,  # pc small
+            620292174365327410,  # console
+            732954678974873633  # botspam2 Test channel
+        )
+        create_thread = False
+        if channel_id in GIVEAWAY_CHANNELS:
+            create_thread = True
+        holder = template.Holder(**document['holder'])
+        __archive_giveaway__(document['_id'], document)
+
+        await channel.send(
+            **template.giveaway_result(
                 winners=[winner.mention for winner in winners],
                 prize=document['prize'],
                 holder=holder,
                 giveaway_link=jump_url,
-                mention_users=False
+                mention_users=not create_thread
             )
-        await channel.send(
-            **giveaway_result
         )
 
         # Create thread for winner to contact holder
-        for winner in winners:
-            thread_name = f'{document["prize"]} | {winner.name} | {winner.id}'
-            if document['row']:
-                thread_name = f"{document['row']} | {thread_name}"
-            await template.create_thread(
-                channel=channel,
-                name=thread_name,
-                add_users=(winner.id, document['holder_mention'][2:-1]),
-                mention_users=(winner.id,),
-                start_msg=template.winner_guide(
-                    document['prize'],
-                    f"https://discord.com/channels/{document['path']}",
-                    holder.tag
+        if create_thread:
+            thread_channel = await template.get_channel(self.bot, thread_channel_id)
+            for winner in winners:
+                thread_id = await template.create_ticket(
+                    thread_channel=thread_channel,
+                    user_id=winner.id,
+                    start_msg={
+                        'content': f'<@{winner.id}>',
+                        'embed': template.winner_guide(
+                            document['prize'],
+                            f"https://discord.com/channels/{document['path']}",
+                            holder.tag
+                        )
+                    }
                 )
-            )
+                asyncio.create_task(self.wait_and_mention((holder.mention,), thread_id))
+
+    async def wait_and_mention(self, mentions: Iterable[str], thread_id: int):
+
+        def check(message):
+            return message.channel.id == thread_id
+
+        response = await self.bot.wait_for('message', check=check)
+        await response.channel.send(''.join(mention for mention in mentions))
 
     @tasks.loop(minutes=check_end_interval)
     async def check_giveaway_end(self):
-        documents = mongodb.find(None, True)  # Returns all result in collection as list
+        documents = collection.find(None, True)  # Returns all result in collection as list
         for document in documents:
             if document['ending'] < time.time() + self.check_end_interval * 60:
                 asyncio.create_task(self.end_giveaway(document))
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        if not self.setup_done:
-            self.setup_done = True
-            self.owner = await self.bot.fetch_user(468631903390400527)
-            self.check_giveaway_end.start()
+    async def setup(self):
+        await self.bot.wait_until_ready()
+        self.thread_channel = await template.get_channel(self.bot, thread_channel_id)
+        self.owner = await self.bot.fetch_user(468631903390400527)
+
+    async def cog_load(self):
+        asyncio.create_task(self.setup())
+        self.check_giveaway_end.start()
 
 
 def __unformat__(string):
@@ -502,25 +514,25 @@ def __find_prize__(giveaway: Giveaway):
     if re_match:
         row = re_match[0][0]
         prize = re_match[0][1].strip()
+        giveaway.display_title = True
     else:
         row = None
         prize = giveaway.description
 
-    giveaway.display_title = bool(re_match)
     giveaway.prize = prize
     giveaway.row = row
 
     return prize, re_match
 
 
+def __archive_giveaway__(_id: int, document: dict = None):
+    archive = mongodb.Collection(mongodb.CloudArchive)
+    if not document:
+        document = collection.find(_id)
+
+    collection.delete(_id)
+    archive.insert(document)
+
+
 if __name__ == '__main__':
-    giveaway = Giveaway(description='''PC | R4005
-Weapon Slots
-
-__Restrictions:__
-None
-
-Donated By: 07꞉19#0719
-__Contact 07꞉19#0719 to claim your prize__''')
-    __find_prize__(giveaway)
-    print(giveaway.prize, giveaway.row)
+    pass

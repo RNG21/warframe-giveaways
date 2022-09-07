@@ -5,9 +5,11 @@ import traceback
 import discord
 from discord.ext import tasks, commands
 
-import giveaways
+import mongodb as mongo
 import parse_commands as parse
 import discord_templates as template
+
+mongodb = mongo.Collection(mongo.TestCloud)
 
 with open('config.json', encoding='utf-8') as file:
     config = json.load(file)
@@ -31,8 +33,7 @@ async def embed(ctx):
         embed_ = discord.Embed.from_dict(dict_)
         await ctx.send(embed=embed_)
     except (json.decoder.JSONDecodeError, TypeError) as error:
-        tb = traceback.format_exception(type(error), error, error.__traceback__)[-1]
-        return await ctx.send(embed=template.error(f'```{tb}```'))
+        return await ctx.send(embed=template.error(f'```{str(error)}```'))
     except discord.errors.HTTPException:
         correct_usage = {
             "title": "example title",
@@ -51,8 +52,29 @@ async def embed(ctx):
                                                    f'Correct example:```json\n{json.dumps(correct_usage, indent=4)}```'))
 
 
+@bot.command(name='clear')
+async def clear_threads(ctx):
+    if ctx.author.id != 468631903390400527:
+        return
+    for thread in ctx.channel.threads:
+        await thread.delete()
+
+
+@bot.command(name='db')
+async def db(ctx):
+    message = '```json\n'
+    for document in mongodb.find(None, True):
+        document = json.dumps(document, indent=4, ensure_ascii=False)
+        if len(message) + len(document) + 3 > 2000:
+            await ctx.send(message+'```')
+            message = '```json\n'
+        message += '\n' + document
+    await ctx.send(message + '```')
+
+
 @bot.command(name='callvote')
 async def callvote(ctx):
+    """To be implemented"""
     pass
 
 
@@ -69,6 +91,10 @@ async def on_command_error(ctx, error):
     await ctx.channel.send(embed=template.error('```Internal Error, report submitted.```', message.jump_url))
 
 
+@bot.event
+async def setup_hook() -> None:
+    await bot.load_extension('giveaways')
+    await bot.load_extension('modmail')
+
 if __name__ == '__main__':
-    asyncio.run(bot.add_cog(giveaways.Giveaways(bot)))
     bot.run(token)

@@ -1,5 +1,6 @@
 import re
 import json
+from typing import Union
 
 with open('config.json', encoding='utf-8') as file:
     config = json.load(file)
@@ -9,12 +10,17 @@ class IncorrectCommandFormat(Exception):
     pass
 
 
-def get_args(content: str, arg_delimiter: str = config['arg_delimiter'], prefix: str = config['prefix']):
+def get_args(content: str,
+             arg_delimiter: str = config['arg_delimiter'],
+             prefix: str = config['prefix'],
+             return_length: int = None
+             ) -> Union[list, str]:
     """Gets argument from message content
 
     :param content: message content (whole message)
-    :param arg_delimiter: delimiter for arguments, if None, all arguments returned in a string
+    :param arg_delimiter: delimiter for arguments, if None, all arguments returned in 1 string
     :param prefix: prefix of command
+    :param return_length: length of return value will be fixed to this value, ignored if arg_delimiter is None.
     :return: arguments
     """
     prefix_match = re.search(f'({prefix})( )?', content)
@@ -29,11 +35,21 @@ def get_args(content: str, arg_delimiter: str = config['arg_delimiter'], prefix:
     command_end = content[prefix_end:].find(' ')
     args = content[prefix_end+command_end+1:]
     if (command_end == -1) or (args.strip() == ''):
+        if return_length:
+            return [None for _ in range(return_length)]
         return []
 
     if not arg_delimiter:
         return args
-    return [arg.strip(' \t') for arg in args.split(arg_delimiter)]
+
+    output = [arg.strip(' \t') for arg in args.split(arg_delimiter)]
+    if return_length:
+        if len(output) < return_length:
+            output.extend(None for _ in range(return_length-len(output)))
+        elif len(output) > return_length:
+            output = output[:return_length]
+
+    return output
 
 
 if __name__ == '__main__':

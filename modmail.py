@@ -10,13 +10,14 @@ import discord_templates as template
 
 
 async def setup(bot: commands.Bot):
-    instance = ModMail(bot)
-    bot.add_view(PersistentView(instance))
-    await bot.add_cog(instance)
+    if thread_channel_id:
+        instance = ModMail(bot)
+        bot.add_view(PersistentView(instance))
+        await bot.add_cog(instance)
 
 
 with open('config.json', encoding='utf-8') as file:
-    thread_channel_id = int(json.load(file)['pickup_channel_id'])
+    thread_channel_id = json.load(file)['pickup_channel_id']
 
 
 class PersistentView(discord.ui.View):
@@ -24,7 +25,9 @@ class PersistentView(discord.ui.View):
         super().__init__(timeout=None)
         self.modmail = modmail
 
-    @discord.ui.button(label='Contact staff', custom_id='persistent_view:contact_staff')
+    @discord.ui.button(label='Contact staff',
+                       custom_id='persistent_view:contact_staff',
+                       emoji='<:sendmessage:1017230150410195047>')
     async def contact_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
         ticket_id = await template.create_ticket(
             self.modmail.channel,

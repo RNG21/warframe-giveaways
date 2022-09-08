@@ -14,7 +14,7 @@ class Holder(object):
     def __init__(self, mention: str = None, tag: str = None, string: str = None):
         self.mention = mention
         self.tag = tag
-        self.string = string
+        self.string = string  # Contact <name> to claim your prize / Hosted by: <name>
 
     def __str__(self):
         return self.string
@@ -81,7 +81,8 @@ def giveaway_result(
         prize: str,
         holder: Holder,
         giveaway_link: str,
-        mention_users: Union[Iterable[str], bool] = False) \
+        mention_users: Union[Iterable[str], bool] = False,
+        reroll: bool = False) \
         -> Dict[str, Union[discord.Embed, str]]:
     """Return value to be used as kwargs for discord.abc.Messageable.send()"""
 
@@ -96,9 +97,15 @@ def giveaway_result(
         mention_winners = ''
 
     contact = holder.mention if holder.mention else holder.tag
+    if reroll:
+        title = 'Giveaway was rerolled'
+        colour = discord.Colour.dark_blue()
+    else:
+        title = 'Giveaway result'
+        colour = discord.Colour.blue()
     embed = discord.Embed(
-        colour=discord.Colour.blue(),
-        title='Giveaway result'
+        colour=colour,
+        title=title
     )
     embed.add_field(name='Prize:', value=f'{prize}', inline=True)
     embed.add_field(**__contact_type__(holder))

@@ -11,6 +11,7 @@ class Local:
     cluster = pymongo.MongoClient("mongodb://localhost:27017/")
     database = cluster["discord"]
     collection = database['WFG']
+    archive = database['archived_giveaways']
 
 
 cluster = pymongo.MongoClient(conn)
@@ -18,27 +19,18 @@ class Cloud:
     cluster = cluster
     database = cluster['discord']
     collection = database['WFG']
-
-class CloudArchive:
-    cluster = cluster
-    database = cluster['discord']
-    collection = database['archived_giveaways']
+    archive = database['archived_giveaways']
 
 class TestCloud:
     cluster = cluster
     database = cluster['Test']
     collection = database['WFG']
-
-class TestCloudArchive:
-    cluster = cluster
-    database = cluster['Test']
-    collection = database['archived_giveaways']
+    archive = database['archived_giveaways']
 
 class Collection:
-    def __init__(self, instance=Cloud):
-        self.cluster = instance.cluster
-        self.database = instance.database
+    def __init__(self, instance):
         self.collection = instance.collection
+        self.archive = Archive(instance.archive)
 
     def delete(self, message_id: Union[int, ObjectId]):
         """Deletes a document by _id"""
@@ -74,7 +66,12 @@ class Collection:
     def update(self, _id: int, dict_: Dict[str, Any]):
         return self.collection.replace_one({'_id': _id}, dict_, upsert=True)
 
+class Archive(Collection):
+    def __init__(self, collection):
+        self.collection = collection
+
 
 if __name__ == '__main__':
     import json
-    print(json.dumps(Collection().find(None, True), indent=4, ensure_ascii=False))
+    db = Collection(Cloud)
+    print(json.dumps(db.archive.find(None, True), indent=4, ensure_ascii=False))

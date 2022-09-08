@@ -4,18 +4,24 @@ import asyncio
 import json
 import traceback
 import random
-from typing import List, Iterable
+from typing import List, Iterable, Union
 
 import discord
 from discord.ext import tasks, commands
+from discord import User, Member, Reaction
 
 import discord_templates as template
 import mongodb
 import parse_commands as parse
 
-collection = mongodb.Collection(mongodb.Cloud)
 with open('config.json', encoding='utf-8') as file:
-    thread_channel_id = json.load(file)['pickup_channel_id']
+    config = json.load(file)
+
+instance = {
+    'test': mongodb.TestCloud,
+    'production': mongodb.Cloud
+}[config['db_instance']]
+collection = mongodb.Collection(instance)
 
 
 async def setup(bot: commands.Bot):
@@ -83,6 +89,71 @@ class Giveaways(commands.Cog):
     @commands.command(name='edit_giveaway')
     async def edit_giveaway(self, ctx):
         pass
+
+    @commands.command(name='reroll')
+    async def reroll(self, ctx):
+        message_id, winner_amount = parse.get_args(ctx.message.content, return_length=2)
+
+        # Validate args
+        if not message_id:
+            return await ctx.send(embed=template.error('Missing argument: message id'))
+
+        # Get message to retrieve reactions
+        try:
+            message = await ctx.fetch_message(message_id)
+        except discord.errors.NotFound:
+            return await ctx.send(embed=template.error('Given message does not exist in this channel'))
+
+        # Find db record of giveaway
+        document = collection.archive.find(message_id)  # noqa
+        if not document:
+            return await ctx.send(embed=template.error(
+                'Unable to find giveaway.\nNote: you can only reroll a giveaway after it has ended'
+            ))
+        else:
+            if winner_amount is None:
+                winner_amount = 1
+            # draw winner and send result
+            winners = await draw_winner(
+                reactions=message.reactions,
+                bot_user=self.bot.user,
+                winner_amount=winner_amount
+            )
+
+            # Send result
+            create_thread = False
+            if ctx.channel.id in config['giveaway_channels']:
+                create_thread = True
+            holder = template.Holder(**document['holder'])
+
+            await ctx.channel.send(
+                **template.giveaway_result(
+                    winners=[winner.mention for winner in winners],
+                    prize=document['prize'],
+                    holder=holder,
+                    giveaway_link=message.jump_url,
+                    mention_users=not create_thread,
+                    reroll=True
+                )
+            )
+
+            # Create thread for winner to contact holder
+            if create_thread:
+                thread_channel = await template.get_channel(self.bot, config['pickup_channel_id'])
+                for winner in winners:
+                    thread_id = await template.create_ticket(
+                        thread_channel=thread_channel,
+                        user_id=winner.id,
+                        start_msg={
+                            'content': f'<@{winner.id}>',
+                            'embed': template.winner_guide(
+                                document['prize'],
+                                f"https://discord.com/channels/{document['path']}",
+                                holder.tag
+                            )
+                        }
+                    )
+                    asyncio.create_task(self.wait_and_mention((holder.mention,), thread_id))
 
     @commands.command(name='start')
     async def start(self, ctx):
@@ -370,34 +441,14 @@ class Giveaways(commands.Cog):
             return await channel.send(embed=template.no_winner(jump_url, '**Warning:**\nEmbed on giveaway was deleted'))
 
         # Determine winner
-        winners = []
-        for reaction in message.reactions:
-            if reaction.emoji == '🎉':
-                reacted_users = [user async for user in reaction.users()]
-                while len(winners) < document['winners']:
-                    if len(reacted_users) == 0:
-                        break
-                    random_index = random.randint(0, len(reacted_users) - 1)
-                    if reacted_users[random_index] == self.bot.user:
-                        reacted_users.pop(random_index)
-                        continue
-                    winners.append(reacted_users[random_index])
-                    reacted_users.pop(random_index)
+        winners = await draw_winner(message.reactions, self.bot.user, document['winners'])
         if not winners:
             __archive_giveaway__(document['_id'], document)
             return await channel.send(embed=template.no_winner(jump_url))
 
         # Send result
-        GIVEAWAY_CHANNELS = (
-            718707589390663710,  # pc grand
-            487801480380809227,  # pc general
-            898527533191020544,  # pc riven
-            703199049863528459,  # pc small
-            620292174365327410,  # console
-            732954678974873633  # botspam2 Test channel
-        )
         create_thread = False
-        if channel_id in GIVEAWAY_CHANNELS:
+        if channel_id in config['giveaway_channels']:
             create_thread = True
         holder = template.Holder(**document['holder'])
         __archive_giveaway__(document['_id'], document)
@@ -414,7 +465,7 @@ class Giveaways(commands.Cog):
 
         # Create thread for winner to contact holder
         if create_thread:
-            thread_channel = await template.get_channel(self.bot, thread_channel_id)
+            thread_channel = await template.get_channel(self.bot, config['pickup_channel_id'])
             for winner in winners:
                 thread_id = await template.create_ticket(
                     thread_channel=thread_channel,
@@ -447,7 +498,8 @@ class Giveaways(commands.Cog):
 
     async def setup(self):
         await self.bot.wait_until_ready()
-        self.thread_channel = await template.get_channel(self.bot, thread_channel_id)
+        if config['pickup_channel_id']:
+            self.thread_channel = await template.get_channel(self.bot, config['pickup_channel_id'])
         self.owner = await self.bot.fetch_user(468631903390400527)
 
     async def cog_load(self):
@@ -492,11 +544,10 @@ def __to_seconds__(duration: str) -> int:
         if (not num) and unit:
             raise NoPrecedingValue('Unit must be immediately preceded by an integer\n'
                                    f'Found unit `{unit}` with no preceding integer')
-        try:
-            matched_units[unit]  # noqa | Used for searching
+        if unit in matched_units:
             raise DuplicateUnit('Can not have more than 1 match of same unit\n'
                                 f'Found: `{["".join(re_match) for re_match in matches]}`')
-        except KeyError:
+        else:
             matched_units[unit] = None
             seconds += int(num) * TO_SECONDS_MULTIPLIER[unit]
 
@@ -526,12 +577,29 @@ def __find_prize__(giveaway: Giveaway):
 
 
 def __archive_giveaway__(_id: int, document: dict = None):
-    archive = mongodb.Collection(mongodb.CloudArchive)
     if not document:
         document = collection.find(_id)
 
     collection.delete(_id)
-    archive.insert(document)
+    collection.archive.insert(document)
+
+
+async def draw_winner(reactions: List[Reaction], bot_user, winner_amount: int = 1) -> List[Union[User, Member]]:
+    winners = []
+    for reaction in reactions:
+        if reaction.emoji == '🎉':
+            reacted_users: List[Union[User, Member]]
+            reacted_users = [user async for user in reaction.users()]
+            while len(winners) < winner_amount:
+                if len(reacted_users) == 0:
+                    break
+                random_index = random.randint(0, len(reacted_users) - 1)
+                if reacted_users[random_index] == bot_user:
+                    reacted_users.pop(random_index)
+                    continue
+                winners.append(reacted_users[random_index])
+                reacted_users.pop(random_index)
+    return winners
 
 
 if __name__ == '__main__':

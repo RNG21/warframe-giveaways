@@ -88,11 +88,15 @@ class Giveaways(commands.Cog):
 
     @commands.command(name='edit_giveaway')
     async def edit_giveaway(self, ctx):
+        """To be implemented"""
         pass
 
     @commands.command(name='reroll')
     async def reroll(self, ctx):
+        """Just, yeah, reroll"""
         message_id, winner_amount = parse.get_args(ctx.message.content, return_length=2)
+        if winner_amount is None:
+            winner_amount = 1
 
         # Validate args
         if not message_id:
@@ -111,8 +115,6 @@ class Giveaways(commands.Cog):
                 'Unable to find giveaway.\nNote: you can only reroll a giveaway after it has ended'
             ))
         else:
-            if winner_amount is None:
-                winner_amount = 1
             # draw winner and send result
             winners = await draw_winner(
                 reactions=message.reactions,
@@ -121,39 +123,7 @@ class Giveaways(commands.Cog):
             )
 
             # Send result
-            create_thread = False
-            if ctx.channel.id in config['giveaway_channels']:
-                create_thread = True
-            holder = template.Holder(**document['holder'])
-
-            await ctx.channel.send(
-                **template.giveaway_result(
-                    winners=[winner.mention for winner in winners],
-                    prize=document['prize'],
-                    holder=holder,
-                    giveaway_link=message.jump_url,
-                    mention_users=not create_thread,
-                    reroll=True
-                )
-            )
-
-            # Create thread for winner to contact holder
-            if create_thread:
-                thread_channel = await template.get_channel(self.bot, config['pickup_channel_id'])
-                for winner in winners:
-                    thread_id = await template.create_ticket(
-                        thread_channel=thread_channel,
-                        user_id=winner.id,
-                        start_msg={
-                            'content': f'<@{winner.id}>',
-                            'embed': template.winner_guide(
-                                document['prize'],
-                                f"https://discord.com/channels/{document['path']}",
-                                holder.tag
-                            )
-                        }
-                    )
-                    asyncio.create_task(self.wait_and_mention((holder.mention,), thread_id))
+            await self.send_result(ctx.channel, document, winners, message.jump_url)
 
     @commands.command(name='start')
     async def start(self, ctx):
@@ -172,12 +142,8 @@ class Giveaways(commands.Cog):
         for role in ctx.author.roles:
             if role.permissions.administrator:
                 allowed = True
-        allowed_role_ids = {
-            487093541147901953: None,
-            615739153010655232: None
-        }
         for role in ctx.author.roles:
-            if role.id in allowed_role_ids:
+            if role.id in config['giveaway_role_ids']:
                 allowed = True
 
         if not allowed:
@@ -185,11 +151,11 @@ class Giveaways(commands.Cog):
 
         # Initialise
         correct_usage = '!start 3d4h ; 1w ; Ember Prime Set'
-        args = parse.get_args(ctx.message.content)
+        args = parse.get_args(ctx.message.content, return_length=4)
         giveaway = Giveaway()
 
-        # Validate number of args
-        if len(args) < 3:
+        # Validate number of args given
+        if args.count(None) > 1:
             return await ctx.channel.send(
                 embed=template.error(
                     "Command requires at least 3 arguments `(duration, winners, text, [kwargs])`\n"
@@ -198,11 +164,12 @@ class Giveaways(commands.Cog):
                 )
             )
 
+        duration, winners, description, kwargs = args
+
         # Define description
-        giveaway.description = args[2].replace('\\n', '\n')
+        giveaway.description = description.replace('\\n', '\n')
 
         # Compute and validate duration
-        duration = args[0]
         if duration.isdigit():
             duration = int(duration)
         else:
@@ -213,17 +180,17 @@ class Giveaways(commands.Cog):
         giveaway.duration = int(duration + time.time())
 
         # Find and validate winner amount
-        if args[1].isdigit():
-            giveaway.winners = int(args[1])
+        if winners.isdigit():
+            giveaway.winners = int(winners)
         else:
-            winners = re.findall('^(\d*)w', args[1])
-            if not winners:
+            winners_match = re.findall('^(\d*)w', winners)
+            if not winners_match:
                 return await ctx.channel.send(embed=template.error('Winner amount not found\n'
                                                                    f'Correct usage: {correct_usage}'))
-            elif len(winners) > 1:
-                return await ctx.channel.send(embed=template.error(f'Multiple winner amounts found: {winners}\n'
+            elif len(winners_match) > 1:
+                return await ctx.channel.send(embed=template.error(f'Multiple winner amounts found: {winners_match}\n'
                                                                    f'Correct usage: {correct_usage}'))
-            giveaway.winners = int(winners[0])
+            giveaway.winners = int(winners_match[0])
 
         # Find holder
         try:
@@ -235,6 +202,9 @@ class Giveaways(commands.Cog):
 
         # Find prize
         __find_prize__(giveaway)
+        if kwargs:
+            giveaway.display_title = True
+            giveaway.prize = kwargs
         if len(giveaway.prize) > 256:
             giveaway.prize = giveaway.prize[:256]
             await ctx.channel.send(
@@ -447,11 +417,46 @@ class Giveaways(commands.Cog):
             return await channel.send(embed=template.no_winner(jump_url))
 
         # Send result
+        await self.send_result(channel, document, winners, jump_url)
+        __archive_giveaway__(document['_id'], document)
+
+    async def wait_and_mention(self, mentions: Iterable[str], thread_id: int):
+
+        def check(message):
+            return message.channel.id == thread_id
+
+        response = await self.bot.wait_for('message', check=check)
+        await response.channel.send(''.join(mention for mention in mentions))
+
+    async def create_ticket(self, winners: Iterable[Union[Member, User]], document: dict, holder: template.Holder):
+        for winner in winners:
+            thread = await template.create_ticket(
+                thread_channel=self.thread_channel,
+                user_id=winner.id,
+                start_msg={
+                    'content': f'<@{winner.id}>',
+                    'embed': template.winner_guide(
+                        document['prize'],
+                        f"https://discord.com/channels/{document['path']}",
+                        holder.tag,
+                        document['row']
+                    )
+                },
+                delete_starter_message=True
+            )
+            asyncio.create_task(self.wait_and_mention((holder.mention,), thread.id))
+
+    async def send_result(
+            self,
+            channel,
+            document,
+            winners,
+            jump_url
+    ):
         create_thread = False
-        if channel_id in config['giveaway_channels']:
+        if channel.id in config['giveaway_channels']:
             create_thread = True
         holder = template.Holder(**document['holder'])
-        __archive_giveaway__(document['_id'], document)
 
         await channel.send(
             **template.giveaway_result(
@@ -465,29 +470,7 @@ class Giveaways(commands.Cog):
 
         # Create thread for winner to contact holder
         if create_thread:
-            thread_channel = await template.get_channel(self.bot, config['pickup_channel_id'])
-            for winner in winners:
-                thread_id = await template.create_ticket(
-                    thread_channel=thread_channel,
-                    user_id=winner.id,
-                    start_msg={
-                        'content': f'<@{winner.id}>',
-                        'embed': template.winner_guide(
-                            document['prize'],
-                            f"https://discord.com/channels/{document['path']}",
-                            holder.tag
-                        )
-                    }
-                )
-                asyncio.create_task(self.wait_and_mention((holder.mention,), thread_id))
-
-    async def wait_and_mention(self, mentions: Iterable[str], thread_id: int):
-
-        def check(message):
-            return message.channel.id == thread_id
-
-        response = await self.bot.wait_for('message', check=check)
-        await response.channel.send(''.join(mention for mention in mentions))
+            await self.create_ticket(winners, document, holder)
 
     @tasks.loop(minutes=check_end_interval)
     async def check_giveaway_end(self):

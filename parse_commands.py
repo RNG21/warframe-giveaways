@@ -13,7 +13,8 @@ class IncorrectCommandFormat(Exception):
 def get_args(content: str,
              arg_delimiter: str = config['arg_delimiter'],
              prefix: str = config['prefix'],
-             return_length: int = None
+             return_length: int = None,
+             join_excess: bool = False
              ) -> Union[list, str]:
     """Gets argument from message content
 
@@ -21,6 +22,7 @@ def get_args(content: str,
     :param arg_delimiter: delimiter for arguments, if None, all arguments returned in 1 string
     :param prefix: prefix of command
     :param return_length: length of return value will be fixed to this value, ignored if arg_delimiter is None.
+    :param join_excess: if True: args after return_length-th arg will be joined together as the last arg. else discards
     :return: arguments
     """
     prefix_match = re.search(f'({prefix})( )?', content)
@@ -47,7 +49,10 @@ def get_args(content: str,
         if len(output) < return_length:
             output.extend(None for _ in range(return_length-len(output)))
         elif len(output) > return_length:
-            output = output[:return_length]
+            if join_excess:
+                output = [*output[:return_length-1], ''.join(output[return_length:])]
+            else:
+                output = [output[:return_length]]
 
     return output
 

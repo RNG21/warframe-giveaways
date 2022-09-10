@@ -3,7 +3,6 @@ import asyncio
 from typing import Iterable, Union
 
 import discord
-from discord import app_commands
 from discord.ext import tasks, commands
 
 import discord_templates as template
@@ -29,12 +28,13 @@ class PersistentView(discord.ui.View):
                        custom_id='persistent_view:contact_staff',
                        emoji='<:sendmessage:1017230150410195047>')
     async def contact_staff(self, interaction: discord.Interaction, button: discord.ui.Button):
-        ticket_id = await template.create_ticket(
+        ticket = await template.create_ticket(
             self.modmail.channel,
             interaction.user.id,
-            f'<@{interaction.user.id}>\nSend a message here to contact staff'
+            f'<@{interaction.user.id}>\nSend a message here to contact staff',
+            delete_starter_message=True
         )
-        await interaction.response.send_message(f'Send a message at <#{ticket_id}>', ephemeral=True)
+        await interaction.response.send_message(f'Send your enquiry at <#{ticket.id}>!', ephemeral=True)
 
 
 class ModMail(commands.Cog):
@@ -43,13 +43,16 @@ class ModMail(commands.Cog):
         self.channel = None
 
     @commands.command(name='ticket')
-    async def setup_ticket(self, interaction: discord.Interaction):
+    async def setup_ticket(self, ctx: commands.Context):
+        """Sends a message with button, creates ticket on click"""
+        if ctx.author.id != 468631903390400527:
+            return
         embed = discord.Embed(
             colour=discord.Colour.green(),
             title='Contact staff',
             description='Click on the button below to contact staff'
         )
-        await interaction.channel.send(embed=embed, view=PersistentView(self))
+        await ctx.channel.send(embed=embed, view=PersistentView(self))
         return
 
     async def setup(self):

@@ -30,6 +30,7 @@ async def echo(ctx):
 
 @bot.command(name='embed')
 async def embed(ctx):
+    """Takes a json object and turns it into an embed"""
     try:
         dict_ = json.loads(parse.get_args(ctx.message.content, arg_delimiter=''))
         embed_ = discord.Embed.from_dict(dict_)
@@ -56,6 +57,7 @@ async def embed(ctx):
 
 @bot.command(name='clear')
 async def clear_threads(ctx):
+    """Clears all threads in channel"""
     if ctx.author.id != 468631903390400527:
         return
     for thread in ctx.channel.threads:
@@ -64,6 +66,7 @@ async def clear_threads(ctx):
 
 @bot.command(name='db')
 async def db(ctx):
+    """Prints all documents in database"""
     message = '```json\n'
     for document in collection.find(None, True):
         document = json.dumps(document, indent=4, ensure_ascii=False)

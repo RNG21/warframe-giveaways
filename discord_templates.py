@@ -132,14 +132,17 @@ def __contact_type__(holder: Holder) -> dict:
         return {'name': 'Item Holder:', 'value': contact, 'inline': True}
 
 
-def winner_guide(prize, giveaway_link, holder_tag):
+def winner_guide(prize, giveaway_link, holder_tag, row=None):
     embed = discord.Embed(
         colour=discord.Colour.blue(),
         title="Congratulations!",
         description=f"You won: **{prize}**\n"
                     "Send a message here to contact item holder to claim your prize")
     embed.add_field(name="Jump", value=f"[to giveaway]({giveaway_link})")
-    embed.set_footer(text=f"Item holder: {holder_tag}")
+    footer_text = f"Item holder: {holder_tag}"
+    if row:
+        footer_text += f' | {row}'
+    embed.set_footer(text=footer_text)
 
     return embed
 
@@ -194,14 +197,15 @@ async def create_thread(
 
 async def create_ticket(thread_channel: discord.TextChannel,
                         user_id: int,
-                        start_msg: Union[str, discord.Embed, dict] = None
-                        ) -> int:
+                        start_msg: Union[str, discord.Embed, dict] = None,
+                        delete_starter_message: bool = False) -> discord.Thread:
     """Creates a ticket for user
 
     Parameter:
         thread_channel: (discord.TextChannel) text channel to create the ticket in
         user_id: (int) id of the user creating the ticket
         start_msg: (Union[str, discord.Embed]) Initial message on creating the thread
+        delete_starter_message: (bool)
     """
     for thread in thread_channel.threads:
         if thread.name == str(user_id):
@@ -214,16 +218,21 @@ async def create_ticket(thread_channel: discord.TextChannel,
             else:
                 raise Exception('start_msg must be dict as kwargs for .send or str or embed')
             await thread.send(**kwargs)
-            return thread.id
+            if thread.starter_message and delete_starter_message:
+                await thread.starter_message.delete()
+            return thread
 
     thread_name = str(user_id)
-    return (await create_thread(
+    thread = await create_thread(
         channel=thread_channel,
         name=thread_name,
         add_users=(user_id,),
         mention_users=(user_id,),
         start_msg=start_msg
-    )).id
+    )
+    if thread.starter_message and delete_starter_message:
+        await thread.starter_message.delete()
+    return thread
 
 
 async def get_channel(bot: commands.Bot, channel_id: int):

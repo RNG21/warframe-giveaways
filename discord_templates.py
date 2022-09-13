@@ -1,9 +1,13 @@
-from typing import Union, Iterable, Dict, Tuple, List
-import traceback
+import json
 import re
+import asyncio
+from typing import Union, Iterable, Dict, Tuple, List
 
 import discord
 from discord.ext import commands
+
+with open('config.json', encoding='utf-8') as file:
+    config = json.load(file)
 
 
 class NotUser(Exception):
@@ -96,7 +100,6 @@ def giveaway_result(
     else:
         mention_winners = ''
 
-    contact = holder.mention if holder.mention else holder.tag
     if reroll:
         title = 'Giveaway was rerolled'
         colour = discord.Colour.dark_blue()
@@ -147,7 +150,7 @@ def winner_guide(prize, giveaway_link, holder_tag, row=None):
     return embed
 
 
-def no_winner(jump_url, message: str=None) -> discord.Embed:
+def no_winner(jump_url, message: str = None) -> discord.Embed:
     embed = discord.Embed(
         title='No winner found!',
         description=message
@@ -159,80 +162,76 @@ def no_winner(jump_url, message: str=None) -> discord.Embed:
 async def create_thread(
         channel: discord.TextChannel,
         name: str,
-        type_=discord.ChannelType.private_thread,
-        add_users: Iterable[int] = (),
-        mention_users: Union[Iterable[int], bool] = False,
-        add_roles: Iterable[int] = (),
-        start_msg: Union[str, discord.Embed, dict] = None,
-) -> discord.Thread:
+        messages: List[Union[str, discord.Embed, dict]],
+        thread_type=discord.ChannelType.private_thread
+) -> Tuple[discord.Thread, discord.Message]:
     """Creates thread"""
     try:
-        thread = await channel.create_thread(name=name, type=type_, invitable=False)
+        thread = await channel.create_thread(name=name, type=thread_type, invitable=False)
     except discord.HTTPException:
         thread = await channel.create_thread(name=name, type=discord.ChannelType.public_thread)
 
-    if type(start_msg) == dict:
-        message = await thread.send(**start_msg)
-    else:
-        if mention_users is True:
-            message = await thread.send(content=f'<@{"".join([str(id_) for id_ in add_users])}>')
-        elif mention_users:
-            message = await thread.send(content=f'<@{"".join([str(id_) for id_ in mention_users])}>')
-        else:
-            message = await thread.send(content=f'.')
-    edit_message = ''.join([f'<@{id_}>' for id_ in add_users])
+    sent_message = await send_and_edit(thread, messages)
 
-    if add_roles:
-        edit_message += f'<@&{"".join([str(id_) for id_ in add_roles])}>'
-
-    kwargs = {'content': edit_message}
-    if type(start_msg) == str:
-        kwargs['content'] += start_msg
-    elif isinstance(start_msg, discord.Embed):
-        kwargs = {'content': edit_message, 'embed': start_msg}
-
-    await message.edit(**kwargs)
-    return thread
+    return thread, sent_message
 
 
 async def create_ticket(thread_channel: discord.TextChannel,
+                        thread_name: str,
                         user_id: int,
-                        start_msg: Union[str, discord.Embed, dict] = None,
-                        delete_starter_message: bool = False) -> discord.Thread:
+                        messages: List[Union[str, discord.Embed, dict]],
+                        delete_starter_message: bool = True
+                        ) -> Tuple[discord.Thread, discord.Message]:
     """Creates a ticket for user
 
-    Parameter:
-        thread_channel: (discord.TextChannel) text channel to create the ticket in
-        user_id: (int) id of the user creating the ticket
-        start_msg: (Union[str, discord.Embed]) Initial message on creating the thread
-        delete_starter_message: (bool)
+    Parameters:
+        thread_channel: text channel to create the ticket in
+        thread_name: name of the thread
+        user_id: id of the user creating the ticket
+        messages: Initial messages on creating the thread, sends the first one and edits it into following ones.
+            Sends only the last if thread already exists
+        delete_starter_message: deletes public threads' starter message
+    Returns:
+        Tuple that consist of 2 elements, the thread and the start message
     """
+    # Check if user already has ticket open
     for thread in thread_channel.threads:
-        if thread.name == str(user_id):
-            if type(start_msg) == dict:
-                kwargs = start_msg
-            elif type(start_msg) == str:
-                kwargs = {'content': start_msg}
-            elif isinstance(start_msg, discord.Embed):
-                kwargs = {'embed': start_msg}
-            else:
-                raise Exception('start_msg must be dict as kwargs for .send or str or embed')
-            await thread.send(**kwargs)
-            if thread.starter_message and delete_starter_message:
-                await thread.starter_message.delete()
-            return thread
+        if str(user_id) in thread.name:  # If ticket already exist
+            if thread_name != thread.name:
+                # Change thread name if a different one provided
+                # TODO: restrict usage cause discord doesn't like channel name changes
+                await thread.edit(name=thread_name)
 
-    thread_name = str(user_id)
-    thread = await create_thread(
+            message = await thread.send(**check_type(messages[-1]))
+            return thread, message
+
+    thread, message = await create_thread(
         channel=thread_channel,
         name=thread_name,
-        add_users=(user_id,),
-        mention_users=(user_id,),
-        start_msg=start_msg
+        messages=messages
     )
     if thread.starter_message and delete_starter_message:
         await thread.starter_message.delete()
-    return thread
+    return thread, message
+
+
+def check_type(message_: Union[str, discord.Embed, dict]) -> dict:
+    """Checks the type of the message and returns suitable kwargs for .send"""
+    if type(message_) == str:
+        return {'content': message_}
+    elif type(message_) == dict:
+        return message_
+    elif isinstance(message_, discord.Embed):
+        return {'embed': message_}
+
+
+async def send_and_edit(channel: discord.abc.Messageable, messages: List[Union[str, discord.Embed, dict]]):
+    """Sends the first message in list and edits it into following elements in the list"""
+    sent_message = await channel.send(**check_type(messages[0]))
+    for message in messages[1:]:
+        await sent_message.edit(**check_type(message))
+
+    return sent_message
 
 
 async def get_channel(bot: commands.Bot, channel_id: int):

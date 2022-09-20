@@ -1,17 +1,14 @@
 import json
 import re
-import asyncio
 from typing import Union, Iterable, Dict, Tuple, List
 
 import discord
 from discord.ext import commands
 
+from utils.errors import NotUser
+
 with open('config.json', encoding='utf-8') as file:
     config = json.load(file)
-
-
-class NotUser(Exception):
-    pass
 
 
 class Holder(object):
@@ -82,7 +79,8 @@ def running_giveaway(
 
 def giveaway_result(
         winners: Iterable[str],
-        prize: str,
+        giveaway_title: str,
+        giveaway_description: str,
         holder: Holder,
         giveaway_link: str,
         mention_users: Union[Iterable[str], bool] = False,
@@ -106,11 +104,18 @@ def giveaway_result(
     else:
         title = 'Giveaway result'
         colour = discord.Colour.blue()
+
+    description = ''
+    if giveaway_title:
+        description += f'**{giveaway_title}**'
+    if giveaway_description:
+        description += f'\n{giveaway_description}'
+
     embed = discord.Embed(
         colour=colour,
-        title=title
+        title=title,
+        description=description
     )
-    embed.add_field(name='Prize:', value=f'{prize}', inline=True)
     embed.add_field(**__contact_type__(holder))
     embed.add_field(name='Winners:', value='\n'.join(winners), inline=False)
     embed.add_field(name='Jump', value=f'[to giveaway]({giveaway_link})', inline=False)
@@ -128,34 +133,37 @@ def __contact_type__(holder: Holder) -> dict:
     if not str(holder):
         raise Exception('__contact_type__ cannot be used when holder.string is empty or None')
 
-    hosted_by = re.search('Hosted by: .*', str(holder), re.IGNORECASE)
-    if hosted_by:
+    if re.search('Hosted by: .*', str(holder), re.IGNORECASE):
         return {'name': 'Hosted by:', 'value': contact, 'inline': True}
     elif re.search('Contact (.*) to claim your prize', str(holder), re.IGNORECASE):
         return {'name': 'Item Holder:', 'value': contact, 'inline': True}
 
 
-def winner_guide(prize, giveaway_link, holder_tag, row=None):
+def winner_guide(prize, description, giveaway_link, holder_tag):
+    if description is None:
+        description = ''
+    if prize is None:
+        prize = ''
+        if description:
+            description = f'**{description}**'
+    if description:
+        description += '\n\n'
     embed = discord.Embed(
         colour=discord.Colour.blue(),
-        title="Congratulations!",
-        description=f"You won: **{prize}**\n"
-                    "Send a message here to contact item holder to claim your prize")
-    embed.add_field(name="Jump", value=f"[to giveaway]({giveaway_link})")
-    footer_text = f"Item holder: {holder_tag}"
-    if row:
-        footer_text += f' | {row}'
-    embed.set_footer(text=footer_text)
+        title=f"You won: {prize}",
+        description=f"{description}"
+                    "**Please tell us your ingame name and at what times you are available to trade**\n"
+                    f"[Jump to giveaway]({giveaway_link})"
+    )
 
     return embed
 
 
-def no_winner(jump_url, message: str = None) -> discord.Embed:
+def no_winner(jump_url, message: str = '') -> discord.Embed:
     embed = discord.Embed(
         title='No winner found!',
-        description=message
+        description=message + f'\n[Jump to giveaway]({jump_url})'
     )
-    embed.add_field(name='Jump', value=f'[to giveaway]({jump_url})')
     return embed
 
 
@@ -163,13 +171,22 @@ async def create_thread(
         channel: discord.TextChannel,
         name: str,
         messages: List[Union[str, discord.Embed, dict]],
-        thread_type=discord.ChannelType.private_thread
+        thread_type=discord.ChannelType.private_thread,
+        auto_archive: int = 604800
 ) -> Tuple[discord.Thread, discord.Message]:
     """Creates thread"""
     try:
-        thread = await channel.create_thread(name=name, type=thread_type, invitable=False)
+        thread = await channel.create_thread(
+            name=name,
+            type=thread_type,
+            auto_archive_duration=auto_archive,
+            invitable=False)
     except discord.HTTPException:
-        thread = await channel.create_thread(name=name, type=discord.ChannelType.public_thread)
+        thread = await channel.create_thread(
+            name=name,
+            type=discord.ChannelType.public_thread,
+            auto_archive_duration=auto_archive
+        )
 
     sent_message = await send_and_edit(thread, messages)
 
@@ -180,7 +197,8 @@ async def create_ticket(thread_channel: discord.TextChannel,
                         thread_name: str,
                         user_id: int,
                         messages: List[Union[str, discord.Embed, dict]],
-                        delete_starter_message: bool = True
+                        delete_starter_message: bool = True,
+                        auto_archive: int = 604800
                         ) -> Tuple[discord.Thread, discord.Message]:
     """Creates a ticket for user
 
@@ -191,6 +209,7 @@ async def create_ticket(thread_channel: discord.TextChannel,
         messages: Initial messages on creating the thread, sends the first one and edits it into following ones.
             Sends only the last if thread already exists
         delete_starter_message: deletes public threads' starter message
+        auto_archive: auto archive duration of the thread
     Returns:
         Tuple that consist of 2 elements, the thread and the start message
     """
@@ -208,7 +227,8 @@ async def create_ticket(thread_channel: discord.TextChannel,
     thread, message = await create_thread(
         channel=thread_channel,
         name=thread_name,
-        messages=messages
+        messages=messages,
+        auto_archive=auto_archive
     )
     if thread.starter_message and delete_starter_message:
         await thread.starter_message.delete()

@@ -6,3 +6,4 @@ Dockerfile
 venv
 __pycache__
 .dockerignore
+sent_requests.log

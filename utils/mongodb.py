@@ -67,7 +67,7 @@ class Collection:
         return self.collection.replace_one({'_id': _id}, dict_, upsert=True)
 
 class Archive(Collection):
-    def __init__(self, collection):
+    def __init__(self, collection):  # noqa | using super.init will cause recursion
         self.collection = collection
 
 

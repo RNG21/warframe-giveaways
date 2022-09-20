@@ -1,26 +1,50 @@
 import asyncio
 import json
 import traceback
+import aiohttp
+import logging
 
 import discord
 from discord.ext import tasks, commands
 
-import mongodb
-import parse_commands as parse
-import discord_templates as template
+from utils import template, mongodb, parse_commands as parse
+from utils.bot_extension import BotExtension
 
+# load config
 with open('config.json', encoding='utf-8') as file:
     config = json.load(file)
 
-instance = {
+# define db
+db_instance = {
     'test': mongodb.TestCloud,
     'production': mongodb.Cloud
 }[config['db_instance']]
-collection = mongodb.Collection(instance)
+collection = mongodb.Collection(db_instance)
 
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=commands.when_mentioned_or(config['prefix']), intents=intents)
-owner = None
+# logging
+async def on_request_start(_, __, params):
+    log_string = f'Starting request | {params.method} | {params.url}'
+    logging.getLogger('aiohttp.client').debug(log_string)
+async def on_request_end(_, __, params):
+    log_string = f'Request ended | {params.url}'
+    logging.getLogger('aiohttp.client').debug(log_string)
+async def on_request_chunk_sent(_, __, param):
+    if param.chunk:
+        log_string = f'request chunk sent | {param.chunk}'
+        logging.getLogger('aiohttp.client').debug(log_string)
+FORMAT = '%(asctime)s %(levelname)s %(filename)s | %(message)s'
+logging.basicConfig(level=logging.DEBUG, format=FORMAT, filename=r'sent_requests.log')
+trace_config = aiohttp.TraceConfig()
+trace_config.on_request_start.append(on_request_start)
+trace_config.on_request_end.append(on_request_end)
+trace_config.on_request_chunk_sent.append(on_request_chunk_sent)
+
+# define bot
+bot = BotExtension(
+    command_prefix=commands.when_mentioned_or(config['prefix']),
+    intents=discord.Intents.all(),
+    http_trace=trace_config
+)
 
 
 @bot.command(name='echo', aliases=['say', 'repeat', 'print'])
@@ -51,8 +75,10 @@ async def embed(ctx):
                 }
             ]
         }
-        return await ctx.send(embed=template.error(f'incorrect format\n\n'
-                                                   f'Correct example:```json\n{json.dumps(correct_usage, indent=4)}```'))
+        return await ctx.send(embed=template.error(
+            f'incorrect format\n\n'
+            f'Correct example:```json\n{json.dumps(correct_usage, indent=4)}```'
+        ))
 
 
 @bot.command(name='clear')
@@ -83,23 +109,13 @@ async def callvote(ctx):
     pass
 
 
-@bot.listen()
-async def on_command_error(ctx, error):
-    global owner
-    if isinstance(error, discord.ext.commands.errors.CommandNotFound) or isinstance(error, discord.errors.Forbidden):
-        return
-    if not owner:
-        owner = await bot.fetch_user(468631903390400527)
-    tb = traceback.format_exception(type(error), error, error.__traceback__)
-    tb_str = ''.join(tb[:-1]) + f'\n{tb[-1]}'
-    message = await owner.send(embed=template.error(f'```{tb_str}```', ctx.message.jump_url))
-    await ctx.channel.send(embed=template.error('```Internal Error, report submitted.```', message.jump_url))
-
-
 @bot.event
 async def setup_hook() -> None:
-    await bot.load_extension('giveaways')
-    await bot.load_extension('modmail')
+    await bot.load_extension('cogs.giveaways')
+    await bot.load_extension('cogs.modmail')
+    await bot.load_extension('cogs.errorhandle')
+    asyncio.create_task(bot.setup())
+
 
 if __name__ == '__main__':
     bot.run(config['token'])

@@ -25,6 +25,7 @@ collection = mongodb.Collection(instance)
 
 
 async def setup(bot: BotExtension):
+    await bot.wait_until_ready()
     await bot.add_cog(Giveaways(bot))
 
 
@@ -545,7 +546,6 @@ class Giveaways(commands.Cog):
         return False
 
     async def setup(self):
-        await self.bot.wait_until_ready()
         if config['modmail_channel_id']:
             self.thread_channel = await template.get_channel(self.bot, config['modmail_channel_id'])
 
@@ -573,7 +573,7 @@ def __to_seconds__(duration: str) -> int:
     if disallowed:
         if len(disallowed) == 1:
             disallowed = disallowed[0]
-        raise DisallowedChars(f'Disallowed characters found: `{disallowed}`\n'
+        raise DisallowedChars(f'Disallowed characters found in duration of giveaway: `{disallowed}`\n'
                               f'Must have digit(s) followed by s, m, h, d or w')
 
     TO_SECONDS_MULTIPLIER = {
@@ -592,13 +592,13 @@ def __to_seconds__(duration: str) -> int:
             raise NoPrecedingValue('Unit must be immediately preceded by an integer\n'
                                    f'Found unit `{unit}` with no preceding integer')
         if unit in matched_units:
-            raise DuplicateUnit('Can not have more than 1 match of same unit\n'
+            raise DuplicateUnit('Cannot have more than 1 match of same unit in duration of giveaway\n'
                                 f'Found: `{["".join(re_match) for re_match in matches]}`')
         else:
             matched_units[unit] = None
             seconds += int(num) * TO_SECONDS_MULTIPLIER[unit]
 
-    return seconds  # noqa | Internal error if UnboundLocalError
+    return seconds
 
 
 def __find_prize__(giveaway: Giveaway):

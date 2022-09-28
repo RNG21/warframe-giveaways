@@ -52,7 +52,7 @@ def get_args(content: str,
             if join_excess:
                 output = [*output[:return_length-1], ''.join(output[return_length:])]
             else:
-                output = [output[:return_length]]
+                output = output[:return_length]
 
     return output
 

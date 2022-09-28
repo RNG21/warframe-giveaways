@@ -10,6 +10,7 @@ from utils import template
 async def setup(bot: commands.Bot):
     """for bot.load_extension"""
     if config['modmail_channel_id']:
+        await bot.wait_until_ready()
         instance = ModMail(bot)
         bot.add_view(StartModmail(instance))
         await bot.add_cog(instance)
@@ -69,7 +70,6 @@ class ModMail(commands.Cog):
         return False
 
     async def setup(self):
-        await self.bot.wait_until_ready()
         self.channel = await template.get_channel(self.bot, config['modmail_channel_id'])
 
     async def cog_load(self):

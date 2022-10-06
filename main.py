@@ -110,10 +110,10 @@ async def callvote(ctx):
 
 
 @bot.event
-async def setup_hook() -> None:
-    await bot.load_extension('cogs.giveaways')
-    await bot.load_extension('cogs.modmail')
-    await bot.load_extension('cogs.errorhandle')
+async def setup_hook():
+    asyncio.create_task(bot.load_extension('cogs.giveaways'))
+    asyncio.create_task(bot.load_extension('cogs.modmail'))
+    asyncio.create_task(bot.load_extension('cogs.errorhandle'))
     asyncio.create_task(bot.setup())
 
 

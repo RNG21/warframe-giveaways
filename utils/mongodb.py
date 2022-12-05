@@ -73,5 +73,6 @@ class Archive(Collection):
 
 if __name__ == '__main__':
     import json
-    db = Collection(Cloud)
-    print(json.dumps(db.archive.find(None, True), indent=4, ensure_ascii=False))
+
+    collection = Collection(TestCloud)
+    print(json.dumps(collection.archive.find('1020279901099663401'), indent=4, ensure_ascii=False))

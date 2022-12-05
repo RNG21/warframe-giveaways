@@ -3,6 +3,7 @@ import discord
 import traceback
 
 from utils import template
+from utils.errors import CustomError
 
 
 class Error(commands.Cog):
@@ -19,6 +20,11 @@ class Error(commands.Cog):
         if isinstance(error, commands.CheckFailure):
             return await ctx.send(
                 embed=template.error('You don\'t have permission to use this command'),
+                reference=ctx.message
+            )
+        if isinstance(error.original, CustomError):
+            return await ctx.send(
+                embed=error.original.embed,
                 reference=ctx.message
             )
         if isinstance(error, (discord.ext.commands.errors.CommandNotFound, discord.errors.Forbidden)):

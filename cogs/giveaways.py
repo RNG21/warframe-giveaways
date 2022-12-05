@@ -12,7 +12,7 @@ from discord.ext import tasks, commands
 
 from utils import template, mongodb, parse_commands as parse
 from utils.bot_extension import BotExtension
-from utils.errors import DuplicateUnit, DisallowedChars, NoPrecedingValue, NotUser
+from utils.errors import DuplicateUnit, DisallowedChars, NoPrecedingValue, NotUser, CustomError
 
 with open('config.json', encoding='utf-8') as file:
     config = json.load(file)
@@ -86,20 +86,20 @@ class Giveaways(commands.Cog):
 
         # Validate args
         if not message_id:
-            return await ctx.send(embed=template.error('Missing argument: message id'))
-
-        # Get message to retrieve reactions
-        try:
-            message = await ctx.fetch_message(message_id)
-        except discord.errors.NotFound:
-            return await ctx.send(embed=template.error('Given message does not exist in this channel'))
+            raise CustomError('Missing argument: message id')
 
         # Find db record of giveaway
         document = collection.archive.find(message_id)
         if not document:
-            return await ctx.send(embed=template.error(
-                'Unable to find giveaway.\nNote: you can only reroll a giveaway after it has ended'
-            ))
+            raise CustomError('Unable to find giveaway.\nNote: you can only reroll a giveaway after it has ended')
+
+        # Get message to retrieve reactions
+        channel = await template.get_channel(self.bot, document['path'].split('/')[1])
+        try:
+            message = await channel.fetch_message(message_id)
+        except discord.errors.NotFound:
+            raise CustomError('Given message does not exist in this channel')
+
         # draw winner and send result
         winners = await draw_winner(
             reactions=message.reactions,
@@ -118,7 +118,8 @@ class Giveaways(commands.Cog):
             giveaway_title=giveaway_title,
             giveaway_description=giveaway_description,
             winners=winners,
-            jump_url=f'https://discord.com/channels/{document["path"]}'
+            jump_url=f'https://discord.com/channels/{document["path"]}',
+            reroll=True
         )
 
     @commands.command(name='start')
@@ -141,7 +142,7 @@ class Giveaways(commands.Cog):
         """
         # Validate channel type
         if isinstance(ctx.channel, discord.DMChannel):
-            return await ctx.channel.send(content='Giveaway in a DM channel?!')
+            raise CustomError('Unable to start giveaway in DM channel')
 
         # Initialise
         correct_usage = '!start 3d4h ; 1w ; Ember Prime Set'
@@ -157,12 +158,10 @@ class Giveaways(commands.Cog):
             else:
                 valid.append(arg)
         if len(invalid) > 1:
-            return await ctx.channel.send(
-                embed=template.error(
-                    "Command requires at least 3 arguments `(duration, winners, text, [kwargs])`\n"
-                    f"Found {len(valid)} arguments: `{valid}`\n"
-                    f"Correct usage: `{correct_usage}`"
-                )
+            raise CustomError(
+                "Command requires at least 3 arguments `(duration, winners, text, [kwargs])`\n"
+                f"Found {len(valid)} arguments: `{valid}`\n"
+                f"Correct usage: `{correct_usage}`"
             )
 
         duration, winners, description, kwargs = args
@@ -174,10 +173,8 @@ class Giveaways(commands.Cog):
         if duration.isdigit():
             duration = int(duration)
         else:
-            try:
-                duration = __to_seconds__(duration)
-            except (DisallowedChars, DuplicateUnit, NoPrecedingValue) as error:
-                return await ctx.channel.send(embed=template.error(str(error)))
+            duration = __to_seconds__(duration)
+
         giveaway.duration = int(duration + time.time())
 
         # Find and validate winner amount
@@ -186,18 +183,13 @@ class Giveaways(commands.Cog):
         else:
             winners_match = re.findall('^(\d*)w', winners)
             if not winners_match:
-                return await ctx.channel.send(embed=template.error('Winner amount not found\n'
-                                                                   f'Correct usage: {correct_usage}'))
+                raise CustomError(f'Winner amount not found\nCorrect usage: {correct_usage}')
             elif len(winners_match) > 1:
-                return await ctx.channel.send(embed=template.error(f'Multiple winner amounts found: {winners_match}\n'
-                                                                   f'Correct usage: {correct_usage}'))
+                raise CustomError(f'Multiple winner amounts found: {winners_match}\nCorrect usage: {correct_usage}')
             giveaway.winners = int(winners_match[0])
 
         # Find holder
-        try:
-            warnings_ = await self.__find_holder__(ctx, giveaway)
-        except NotUser as error:
-            return await ctx.channel.send(embed=template.error(str(error)))
+        warnings_ = await self.__find_holder__(ctx, giveaway)
         for warning in warnings_:
             await ctx.channel.send(embed=template.warning(warning))
 
@@ -232,7 +224,7 @@ class Giveaways(commands.Cog):
                 delete_after = 60
                 embed = template.warning(
                     f'I need `Add Reaction` permission at {ctx.channel.mention}.\n'
-                    f'Please manually add reaction of 🎉 to [the message]({message.jump_url})'  # noqa | validated
+                    f'Please manually add reaction of 🎉 to [the message]({giveaway.message.jump_url})'
                     f'\n\nThis warning message will be deleted <t:{int(time.time() + delete_after)}:R>'
                 )
 
@@ -242,9 +234,7 @@ class Giveaways(commands.Cog):
                     delete_after=delete_after
                 )
             else:
-                return await ctx.author.send(
-                    embed=template.error(f'I need `Send Messages` permission at {ctx.channel.mention}')
-                )
+                raise CustomError(f'I need `Send Messages` permission at {ctx.channel.mention}')
 
         # Add to running giveaways if ending after self.check_end_interval minutes
         server_id, channel_id, message_id = giveaway.message.jump_url.split('/')[-3:]
@@ -438,11 +428,24 @@ class Giveaways(commands.Cog):
         )
         __archive_giveaway__(document['_id'], document)
 
-    async def wait_and_mention(self, mentions: Iterable[str], winner_id: int, ref_message: discord.Message = None):
-        """"""
+    async def wait_and_mention(
+            self,
+            thread_id: int,
+            mentions: Iterable[str],
+            winner_id: int,
+            ref_message: discord.Message = None
+    ) -> None:
+        """Waits for winner to send first message and mentions item holder
+
+        :param thread_id: the thread to wait for a reply
+        :param mentions: strings of user mentions
+        :param winner_id: user id to wait for message
+        :param ref_message: the message to refer to
+        """
 
         def check(message):
-            return message.author.id == winner_id
+            if message.channel.id == thread_id:
+                return message.author.id == winner_id
 
         response = await self.bot.wait_for('message', check=check, timeout=604800)
         await response.channel.send(''.join(mention for mention in mentions), reference=ref_message)
@@ -464,7 +467,7 @@ class Giveaways(commands.Cog):
             holder: giveaway item holder
         """
         for winner in winners:
-            _, message = await template.create_ticket(
+            thread, message = await template.create_ticket(
                 thread_channel=self.thread_channel,
                 thread_name=f'{winner.name} | {winner.id}',
                 user_id=winner.id,
@@ -479,6 +482,7 @@ class Giveaways(commands.Cog):
                 }],
             )
             asyncio.create_task(self.wait_and_mention(
+                thread_id=thread.id,
                 mentions=(holder.mention,),
                 winner_id=winner.id,
                 ref_message=message
@@ -491,7 +495,8 @@ class Giveaways(commands.Cog):
             giveaway_title: str,
             giveaway_description: str,
             winners: Iterable[Union[Member, User]],
-            jump_url: str
+            jump_url: str,
+            reroll: bool = False
     ):
         """Sends giveaway result and creates ticket if in giveaway channel
 
@@ -502,9 +507,11 @@ class Giveaways(commands.Cog):
             giveaway_description: description of the giveaway message
             winners: list of winners
             jump_url: url of original giveaway message
+            reroll: True if used for reroll
         """
-        create_thread = True if channel.id in config['giveaway_channels'] else False
+        create_ticket = True if channel.id in config['giveaway_channels'] else False
 
+        # Send winner notification
         await channel.send(
             **template.giveaway_result(
                 winners=[winner.mention for winner in winners],
@@ -512,12 +519,13 @@ class Giveaways(commands.Cog):
                 giveaway_description=giveaway_description,
                 holder=holder,
                 giveaway_link=jump_url,
-                mention_users=not create_thread
+                mention_users=not create_ticket,
+                reroll=reroll
             )
         )
 
-        # Create thread for winner to contact holder
-        if create_thread:
+        # Create ticket for winner to contact holder
+        if create_ticket:
             await self.__create_ticket__(
                 winners=winners,
                 giveaway_title=giveaway_title,
@@ -545,12 +553,9 @@ class Giveaways(commands.Cog):
 
         return False
 
-    async def setup(self):
+    async def cog_load(self):
         if config['modmail_channel_id']:
             self.thread_channel = await template.get_channel(self.bot, config['modmail_channel_id'])
-
-    async def cog_load(self):
-        asyncio.create_task(self.setup())
         self.check_giveaway_end.start()
 
 

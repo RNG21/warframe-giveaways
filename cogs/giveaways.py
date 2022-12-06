@@ -217,15 +217,14 @@ class Giveaways(commands.Cog):
         for warning in warnings_:
             await ctx.channel.send(embed=template.warning(warning))
 
-        # Find prize
-        if title:
-            giveaway.prize = title
-        else:
-            giveaway.description = description
-
-        if len(giveaway.prize) > 256:
-            raise CustomError('Giveaway prize (title) length must not be longer than 256\n'
-                              f'```\n{giveaway.prize}```Is {len(giveaway.prize)} characters')
+        # Set prize & description
+        giveaway.prize = title
+        giveaway.description = description
+        # Validate
+        if giveaway.prize is not None:  # Can't len(None)
+            if len(giveaway.prize) > 256:
+                raise CustomError('Giveaway prize (title) length must not be longer than 256\n'
+                                  f'```\n{giveaway.prize}```Is {len(giveaway.prize)} characters')
 
         # Send giveaway
         try:
@@ -324,7 +323,7 @@ class Giveaways(commands.Cog):
             elif tag:
                 holder.tag = tag
                 span = re_match.span(3)
-            holder.string = f'Contact {holder.tag} to claim your prize'
+                holder.string = f'Contact {holder.tag} to claim your prize'
 
         # Get member object
         if holder.mention:
@@ -343,6 +342,7 @@ class Giveaways(commands.Cog):
             # Populate both holder.tag and holder.id
             holder.mention = member.mention
             holder.tag = str(member)
+            holder.string = f'Contact {holder.tag} to claim your prize'
 
         giveaway.holder = holder
         return warnings_

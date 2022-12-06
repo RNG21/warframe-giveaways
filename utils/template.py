@@ -270,9 +270,13 @@ async def get_channel(bot: commands.Bot, channel_id: int):
 async def get_member(
         bot: commands.Bot = None, ctx: commands.Context = None, guild: discord.Guild = None,
         user_id: int = None, user_tag: str = None)\
-        -> Tuple[Union[discord.User, discord.Member], List[str]]:
+        -> Tuple[Union[discord.User, discord.Member, None], List[str]]:
     """Returns member or user object
+
     Requires (user_tag and ctx) or (user_id and (bot or ctx or guild))
+
+    user_id and (bot or ctx or guild) -> Union[discord.User, discord.Member]
+    user_tag and ctx -> Union[discord.User, discord.Member, None]
     """
     member_by_id = user_id and (ctx or guild)
     user_by_id = user_id and bot

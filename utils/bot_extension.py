@@ -4,6 +4,7 @@ from utils import template
 
 
 class BotExtension(commands.Bot):
+    """adds owner attribute (as a user object) to commands.Bot"""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.owner = None

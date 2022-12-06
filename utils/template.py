@@ -172,7 +172,7 @@ async def create_thread(
         name: str,
         messages: List[Union[str, discord.Embed, dict]],
         thread_type=discord.ChannelType.private_thread,
-        auto_archive: int = 604800
+        auto_archive: int = 10080
 ) -> Tuple[discord.Thread, discord.Message]:
     """Creates thread"""
     try:
@@ -198,7 +198,7 @@ async def create_ticket(thread_channel: discord.TextChannel,
                         user_id: int,
                         messages: List[Union[str, discord.Embed, dict]],
                         delete_starter_message: bool = True,
-                        auto_archive: int = 604800
+                        auto_archive: int = 10080
                         ) -> Tuple[discord.Thread, discord.Message]:
     """Creates a ticket for user
 
@@ -209,12 +209,17 @@ async def create_ticket(thread_channel: discord.TextChannel,
         messages: Initial messages on creating the thread, sends the first one and edits it into following ones.
             Sends only the last if thread already exists
         delete_starter_message: deletes public threads' starter message
-        auto_archive: auto archive duration of the thread
+        auto_archive: auto archive duration of the thread in minutes
     Returns:
         Tuple that consist of 2 elements, the thread and the start message
     """
     # Check if user already has ticket open
-    for thread in thread_channel.threads:
+    threads = [
+        *thread_channel.threads,
+        *[thread async for thread in thread_channel.archived_threads(private=True)],
+        *[thread async for thread in thread_channel.archived_threads(private=False)]
+    ]
+    for thread in threads:
         if str(user_id) in thread.name:  # If ticket already exist
             if thread_name != thread.name:
                 # Change thread name if a different one provided
@@ -290,7 +295,7 @@ async def get_member(
                         member = await bot.fetch_user(user_id)
                         warnings_.append(f'`{str(member)}` is not a member of the server!')
                     except discord.NotFound:
-                        raise NotUser(f'{user_id} is not user!')
+                        raise NotUser(f'`{user_id}` is not user!')
                 else:
                     warnings_.append(f'{user_id} is not member of the server!')
 
@@ -298,7 +303,7 @@ async def get_member(
         try:
             member = await bot.fetch_user(user_id)
         except discord.NotFound:
-            raise NotUser(f'{user_id} is not user!')
+            raise NotUser(f'`{user_id}` is not user!')
     elif by_tag:
         try:
             member = await commands.MemberConverter().convert(ctx, user_tag)

@@ -103,12 +103,6 @@ async def db(ctx):
     await ctx.send(message + '```')
 
 
-@bot.command(name='callvote')
-async def callvote(ctx):
-    """To be implemented"""
-    pass
-
-
 @bot.event
 async def setup_hook():
     asyncio.create_task(bot.load_extension('cogs.giveaways'))

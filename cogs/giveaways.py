@@ -77,9 +77,30 @@ class Giveaways(commands.Cog):
         """To be implemented"""
         pass
 
+    @commands.command(name='end')
+    async def end(self, ctx):
+        """Ends a giveaway before timer runs out
+
+        Example usage:
+            !end 1049431042206990498
+
+        Parameters:
+            id_ - message id of the giveaway (not the result message)
+        """
+
+
+
     @commands.command(name='reroll')
     async def reroll(self, ctx):
-        """Just, yeah, reroll"""
+        """Rerolls a giveaway
+
+        Example usage:
+            !reroll 1049431042206990498
+
+        Parameters:
+            id_ - message id of the giveaway (not the result message)
+
+        """
         message_id, winner_amount = parse.get_args(ctx.message.content, return_length=2)
         if winner_amount is None:
             winner_amount = 1
@@ -98,7 +119,7 @@ class Giveaways(commands.Cog):
         try:
             message = await channel.fetch_message(message_id)
         except discord.errors.NotFound:
-            raise CustomError('Given message does not exist in this channel')
+            raise CustomError('Giveaway not found!')
 
         # draw winner and send result
         winners = await draw_winner(

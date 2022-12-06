@@ -76,7 +76,7 @@ class Giveaways(commands.Cog):
         """Ends a giveaway before timer runs out
 
         Example usage:
-            !end 1049431042206990498
+            !gend 1049431042206990498
 
         Parameters:
             id_ - message id of the giveaway (not the result message)
@@ -93,7 +93,7 @@ class Giveaways(commands.Cog):
         """Rerolls a giveaway
 
         Example usage:
-            !reroll 1049431042206990498
+            !greroll 1049431042206990498
 
         Parameters:
             id_ - message id of the giveaway (not the result message)
@@ -149,12 +149,11 @@ class Giveaways(commands.Cog):
     @commands.command(name='start')
     async def start(self, ctx):
         """Starts a giveaway
-        Starts a giveaway
-        Syntax: !start duration ; winners ; description ; [title]
+        Syntax: !gstart duration ; winners ; description ; [title]
 
         Example usage:
-            !start 3d4h ; 1w ; Weapon Slots
-            !start 3600 ; 5 ;; Weapon Slots
+            !gstart 3d4h ; 1w ; Weapon Slots
+            !gstart 3600 ; 5 ;; Weapon Slots
 
         Parameters:
             duration - integer or digits followed by a unit.
@@ -217,15 +216,14 @@ class Giveaways(commands.Cog):
         for warning in warnings_:
             await ctx.channel.send(embed=template.warning(warning))
 
-        # Find prize
-        if title:
-            giveaway.prize = title
-        else:
-            giveaway.description = description
-
-        if len(giveaway.prize) > 256:
-            raise CustomError('Giveaway prize (title) length must not be longer than 256\n'
-                              f'```\n{giveaway.prize}```Is {len(giveaway.prize)} characters')
+        # Set prize & description
+        giveaway.prize = title
+        giveaway.description = description
+        # Validate
+        if giveaway.prize is not None:  # Can't len(None)
+            if len(giveaway.prize) > 256:
+                raise CustomError('Giveaway prize (title) length must not be longer than 256\n'
+                                  f'```\n{giveaway.prize}```Is {len(giveaway.prize)} characters')
 
         # Send giveaway
         try:
@@ -324,7 +322,7 @@ class Giveaways(commands.Cog):
             elif tag:
                 holder.tag = tag
                 span = re_match.span(3)
-            holder.string = f'Contact {holder.tag} to claim your prize'
+                holder.string = f'Contact {holder.tag} to claim your prize'
 
         # Get member object
         if holder.mention:
@@ -343,6 +341,7 @@ class Giveaways(commands.Cog):
             # Populate both holder.tag and holder.id
             holder.mention = member.mention
             holder.tag = str(member)
+            holder.string = f'Contact {holder.tag} to claim your prize'
 
         giveaway.holder = holder
         return warnings_

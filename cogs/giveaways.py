@@ -36,9 +36,7 @@ class Giveaway(object):
     holder: template.Holder
     display_holder: bool
     prize: str
-    display_title: bool
     message: discord.Message
-    row: str
 
     def __init__(
             self,
@@ -48,9 +46,7 @@ class Giveaway(object):
             holder: template.Holder = None,
             display_holder: bool = None,
             prize: str = None,
-            display_title: bool = False,
             message: discord.Message = None,
-            row: str = None
     ):
         self.duration = duration
         self.winners = winners
@@ -58,9 +54,7 @@ class Giveaway(object):
         self.holder = holder
         self.display_holder = display_holder
         self.prize = prize
-        self.display_title = display_title
         self.message = message
-        self.row = row
 
 
 class Giveaways(commands.Cog):
@@ -87,8 +81,12 @@ class Giveaways(commands.Cog):
         Parameters:
             id_ - message id of the giveaway (not the result message)
         """
-
-
+        message_id = parse.get_args(ctx.message.content, return_length=1)[0]
+        document = collection.find(message_id)
+        if document is None:
+            raise CustomError(f'No active giveaway with ID `{message_id}` found')
+        document['ending'] = time.time()
+        await self.end_giveaway(document)
 
     @commands.command(name='reroll')
     async def reroll(self, ctx):
@@ -99,11 +97,15 @@ class Giveaways(commands.Cog):
 
         Parameters:
             id_ - message id of the giveaway (not the result message)
-
+            [winner_amount] - amount of new winners
         """
         message_id, winner_amount = parse.get_args(ctx.message.content, return_length=2)
         if winner_amount is None:
             winner_amount = 1
+        elif not winner_amount.isdigit():
+            raise CustomError(f'Winner amount must be integer, got `{winner_amount}` instead')
+        else:
+            winner_amount = int(winner_amount)
 
         # Validate args
         if not message_id:
@@ -112,7 +114,8 @@ class Giveaways(commands.Cog):
         # Find db record of giveaway
         document = collection.archive.find(message_id)
         if not document:
-            raise CustomError('Unable to find giveaway.\nNote: you can only reroll a giveaway after it has ended')
+            raise CustomError(f'Unable to find giveaway with id `{message_id}`.\n'
+                              'Note: you can only reroll a giveaway after it has ended')
 
         # Get message to retrieve reactions
         channel = await template.get_channel(self.bot, document['path'].split('/')[1])
@@ -150,8 +153,8 @@ class Giveaways(commands.Cog):
         Syntax: !start duration ; winners ; description ; [title]
 
         Example usage:
-            !start 3d4h ; 1w ; Ember Prime Set
-            !start 3600 ; 5 ;; Ember Prime Set
+            !start 3d4h ; 1w ; Weapon Slots
+            !start 3600 ; 5 ;; Weapon Slots
 
         Parameters:
             duration - integer or digits followed by a unit.
@@ -166,7 +169,7 @@ class Giveaways(commands.Cog):
             raise CustomError('Unable to start giveaway in DM channel')
 
         # Initialise
-        correct_usage = '!start 3d4h ; 1w ; Ember Prime Set'
+        correct_usage = '!start 3d4h ; 1w ; Weapon Slots'
         args = parse.get_args(ctx.message.content, return_length=4)
         giveaway = Giveaway()
 
@@ -180,12 +183,12 @@ class Giveaways(commands.Cog):
                 valid.append(arg)
         if len(invalid) > 1:
             raise CustomError(
-                "Command requires at least 3 arguments `(duration, winners, text, [kwargs])`\n"
+                "Command requires at least 3 arguments `(duration, winners, text, [title])`\n"
                 f"Found {len(valid)} arguments: `{valid}`\n"
                 f"Correct usage: `{correct_usage}`"
             )
 
-        duration, winners, description, kwargs = args
+        duration, winners, description, title = args
 
         # Define description
         giveaway.description = description.replace('\\n', '\n')
@@ -215,16 +218,14 @@ class Giveaways(commands.Cog):
             await ctx.channel.send(embed=template.warning(warning))
 
         # Find prize
-        __find_prize__(giveaway)
-        if kwargs:
-            giveaway.display_title = True
-            giveaway.prize = kwargs
+        if title:
+            giveaway.prize = title
+        else:
+            giveaway.description = description
+
         if len(giveaway.prize) > 256:
-            giveaway.prize = giveaway.prize[:256]
-            await ctx.channel.send(
-                content=ctx.author.mention,
-                embed=template.warning('Length of prize restricted to 256 chars')
-            )
+            raise CustomError('Giveaway prize (title) length must not be longer than 256\n'
+                              f'```\n{giveaway.prize}```Is {len(giveaway.prize)} characters')
 
         # Send giveaway
         try:
@@ -235,7 +236,6 @@ class Giveaways(commands.Cog):
                     holder=giveaway.holder,
                     description=giveaway.description,
                     prize=giveaway.prize,
-                    display_title=giveaway.display_title
                 )
             )
             await giveaway.message.add_reaction('🎉')
@@ -625,28 +625,6 @@ def __to_seconds__(duration: str) -> int:
             seconds += int(num) * TO_SECONDS_MULTIPLIER[unit]
 
     return seconds
-
-
-def __find_prize__(giveaway: Giveaway):
-    """Tries figuring the prize"""
-    pattern = '(?:(?:PC|(?:xbox one)|ps4|playstation|switch|xbox) \| (R\d{4})\n)?(?:(.*\n*|(?:.*\n)*))' \
-              '(?:(?:\nrestrictions(?:.*\n)*)|' \
-              '(?:\ndonated by(?::)? .*\n)|' \
-              '(?:\ncontact(?::)? .*))'
-
-    re_match = re.findall(pattern, __unformat__(giveaway.description.strip()), re.IGNORECASE)
-    if re_match:
-        row = re_match[0][0]
-        prize = re_match[0][1].strip()
-        giveaway.display_title = True
-    else:
-        row = None
-        prize = giveaway.description
-
-    giveaway.prize = prize
-    giveaway.row = row
-
-    return prize, re_match
 
 
 def __archive_giveaway__(_id: int, document: dict = None):

@@ -50,13 +50,13 @@ def info(message: str) -> discord.Embed:
 def running_giveaway(
         unix: int,
         winners: int,
-        description: str,
         holder: Holder,
-        display_title: bool = False,
+        description: str = None,
         prize: str = None) \
         -> discord.Embed:
-    if not display_title:
-        prize = None
+
+    if (description is None) and (prize is None):
+        raise Exception('description and prize must not both be None')
 
     embed = discord.Embed(
         title=prize,

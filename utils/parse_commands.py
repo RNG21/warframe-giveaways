@@ -1,9 +1,14 @@
 import re
 import json
-from typing import Union
+from typing import Union, List
 
-with open('config.json', encoding='utf-8') as file:
-    config = json.load(file)
+if __name__ == '__main__':
+    import os.path
+    with open(os.path.dirname(__file__) + '/../config.json', encoding='utf-8') as file:
+        config = json.load(file)
+else:
+    with open('config.json', encoding='utf-8') as file:
+        config = json.load(file)
 
 
 class IncorrectCommandFormat(Exception):
@@ -12,7 +17,7 @@ class IncorrectCommandFormat(Exception):
 
 def get_args(content: str,
              arg_delimiter: str = config['arg_delimiter'],
-             prefix: str = config['prefix'],
+             prefixes: List[str] = config['prefix'],
              return_length: int = None,
              join_excess: bool = False
              ) -> Union[list, str]:
@@ -20,15 +25,15 @@ def get_args(content: str,
 
     :param content: message content (whole message)
     :param arg_delimiter: delimiter for arguments, if None, all arguments returned in 1 string
-    :param prefix: prefix of command
+    :param prefixes: prefix of command
     :param return_length: length of return value will be fixed to this value, ignored if arg_delimiter is None.
     :param join_excess: if True: args after return_length-th arg will be joined together as the last arg. else discards
     :return: arguments
     """
-    prefix_match = re.search(f'({prefix})( )?', content)
+    prefix_match = re.search(f'({"|".join(prefix for prefix in prefixes)})( )?', content)
 
     if prefix_match is None:
-        raise IncorrectCommandFormat(f'Prefix {prefix} not found in content')
+        raise IncorrectCommandFormat(f'Prefix `{prefixes}` not found in content')
 
     prefix_start, prefix_end = prefix_match.span()
     if prefix_start != 0:
@@ -57,8 +62,8 @@ def get_args(content: str,
     return output
 
 
-if __name__ == '__main__':
-    print(get_args('''!start 10s ; 1w ; PC | R3764
+if __name__ == "__main__":
+    print(get_args('''g-start 10s ; 1w ; PC | R3764
 Vulkar vexi-critacan ; 
 __**Restrictions: **__
 Must be MR14+, Must have 700+ kills on Vulkar

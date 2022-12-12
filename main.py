@@ -41,7 +41,7 @@ trace_config.on_request_chunk_sent.append(on_request_chunk_sent)
 
 # define bot
 bot = BotExtension(
-    command_prefix=commands.when_mentioned_or(config['prefix']),
+    command_prefix=commands.when_mentioned_or(*config['prefix']),
     intents=discord.Intents.all(),
     http_trace=trace_config
 )

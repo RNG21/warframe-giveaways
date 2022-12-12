@@ -17,6 +17,8 @@ class Error(commands.Cog):
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
+        if isinstance(error, (discord.ext.commands.errors.CommandNotFound, discord.errors.Forbidden)):
+            return
         if isinstance(error, commands.CheckFailure):
             return await ctx.send(
                 embed=template.error('You don\'t have permission to use this command'),
@@ -27,8 +29,6 @@ class Error(commands.Cog):
                 embed=error.original.embed,
                 reference=ctx.message
             )
-        if isinstance(error, (discord.ext.commands.errors.CommandNotFound, discord.errors.Forbidden)):
-            return
         tb = traceback.format_exception(type(error), error, error.__traceback__)
         tb_str = ''.join(tb[:-1]) + f'\n{tb[-1]}'
         message = await self.bot.owner.send(embed=template.error(f'```{tb_str}```', ctx.message.jump_url))

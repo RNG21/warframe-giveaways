@@ -163,9 +163,6 @@ class Giveaways(commands.Cog):
             description - Description of the giveaway, this will be the prize if title is not provided
             title - the prize and title of the giveaway
         """
-        # Validate channel type
-        if isinstance(ctx.channel, discord.DMChannel):
-            raise CustomError('Unable to start giveaway in DM channel')
 
         # Initialise
         correct_usage = '!start 3d4h ; 1w ; Weapon Slots'
@@ -562,16 +559,36 @@ class Giveaways(commands.Cog):
                 asyncio.create_task(self.end_giveaway(document))
 
     async def cog_check(self, ctx):
+        if isinstance(ctx.channel, discord.DMChannel):
+            return False
+
+        allowed = False
         if ctx.author == ctx.guild.owner:
-            return True
+            allowed = True
 
         for role in ctx.author.roles:
             if role.permissions.administrator:
-                return True
+                allowed = True
             elif role.id in config['giveaway_role_ids']:
-                return True
+                allowed = True
 
-        return False
+        if allowed:
+            embed = discord.Embed(
+                title='Command used',
+                description=f'```\n{ctx.message.content}```',
+            )
+            embed.add_field(
+                name="author",
+                value=f'{ctx.author.id} | {str(ctx.author)}'
+            )
+            embed.add_field(
+                name='channel',
+                value=f'{str(ctx.channel)} | {ctx.message.jump_url}',
+                inline=False
+            )
+            await self.bot.log_channel.send(embed=embed)
+
+        return allowed
 
     async def cog_load(self):
         if config['modmail_channel_id']:

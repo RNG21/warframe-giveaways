@@ -114,8 +114,7 @@ class Giveaways(commands.Cog):
         # Find db record of giveaway
         document = collection.archive.find(message_id)
         if not document:
-            raise CustomError(f'Unable to find giveaway with id `{message_id}`.\n'
-                              'Note: you can only reroll a giveaway after it has ended')
+            raise CustomError(f'Unable to find giveaway with id `{message_id}`.\n')
 
         # Get message to retrieve reactions
         channel = await template.get_channel(self.bot, document['path'].split('/')[1])
@@ -130,6 +129,10 @@ class Giveaways(commands.Cog):
             bot_user=self.bot.user,
             winner_amount=winner_amount
         )
+        if not winners:
+            return await ctx.channel.send(embed=template.no_winner(
+                f'https://discord.com/channels/{document["path"]}'
+            ))
 
         # Extract giveaway title and description
         giveaway_title = message.embeds[0].title
@@ -265,12 +268,11 @@ class Giveaways(commands.Cog):
             },
             'path': f'{server_id}/{channel_id}/{message_id}'
         }
-        if giveaway.duration > self.check_end_interval * 60 + time.time():
-            collection.insert(document)
-        # else start process (and add entry to db for redundancy)
-        else:
-            collection.insert(document)
+
+        if not giveaway.duration > self.check_end_interval * 60 + time.time():
             asyncio.create_task(self.end_giveaway(document))
+        collection.insert(document)
+        collection.archive.insert(document)
 
         try:
             await ctx.message.delete()
@@ -362,7 +364,7 @@ class Giveaways(commands.Cog):
 
         # return if giveaway was deleted during above sleep
         if document['_id'] in self.delete_giveaway:
-            __archive_giveaway__(document['_id'], document)
+            collection.delete(document['_id'])
             return
 
         server_id, channel_id, message_id = [int(_id) for _id in document['path'].split('/')]
@@ -371,7 +373,7 @@ class Giveaways(commands.Cog):
         try:
             channel = await template.get_channel(self.bot, channel_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException, discord.InvalidData) as error:
-            __archive_giveaway__(document['_id'], document)
+            collection.delete(document['_id'])
             return self.bot.owner.send(
                 embed=template.error(
                     f'{type(error).__name__}\n```{document}```'
@@ -385,7 +387,7 @@ class Giveaways(commands.Cog):
         # if message not found try sending error message to channel
         except discord.NotFound:
             try:
-                __archive_giveaway__(document['_id'], document)
+                collection.delete(document['_id'])
                 return await channel.send(
                     embed=template.error(
                         'Hmm I can\'t seem to find a giveaway that\'s supposed to end at this time\n'
@@ -395,7 +397,7 @@ class Giveaways(commands.Cog):
                 )
             # if no perm to send error message, send to owner
             except discord.Forbidden:
-                __archive_giveaway__(document['_id'], document)
+                collection.delete(document['_id'])
                 return await self.bot.owner.send(
                     f'Forbidden on sending following error\n'
                     f'Giveaway not found\n```{document}```'
@@ -404,7 +406,7 @@ class Giveaways(commands.Cog):
         except Exception as error:
             tb = traceback.format_exception(type(error), error, error.__traceback__)
             tb_str = ''.join(tb[:-1]) + f'\n{tb[-1]}'
-            __archive_giveaway__(document['_id'], document)
+            collection.delete(document['_id'])
             return await self.bot.owner.send(
                 f'```json\n{json.dumps(document, indent=4, ensure_ascii=False)}```',
                 embed=template.error(f'Failed to end giveaway\n```{tb_str}```')
@@ -421,13 +423,13 @@ class Giveaways(commands.Cog):
             embed.colour = None
             await message.edit(embed=embed)
         else:
-            __archive_giveaway__(document['_id'], document)
+            collection.delete(document['_id'])
             return await channel.send(embed=template.no_winner(jump_url, '**Warning:**\nEmbed on giveaway was deleted'))
 
         # Determine winner
         winners = await draw_winner(message.reactions, self.bot.user, document['winners'])
         if not winners:
-            __archive_giveaway__(document['_id'], document)
+            collection.delete(document['_id'])
             return await channel.send(embed=template.no_winner(jump_url))
 
         # Extract giveaway title and description
@@ -443,7 +445,7 @@ class Giveaways(commands.Cog):
             winners=winners,
             jump_url=jump_url
         )
-        __archive_giveaway__(document['_id'], document)
+        collection.delete(document['_id'])
 
     async def wait_and_mention(
             self,
@@ -558,6 +560,27 @@ class Giveaways(commands.Cog):
             if document['ending'] < time.time() + self.check_end_interval * 60:
                 asyncio.create_task(self.end_giveaway(document))
 
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, event):
+        if collection.archive.find(str(event.message_id)) is not None:
+            await self.check_disqualified(event)
+
+    async def check_disqualified(self, event: discord.RawReactionActionEvent):
+        """checks if a user who entered giveaway has disqualified role, removes reaction if yes"""
+        channel = await template.get_channel(self.bot, event.channel_id)
+        message = channel.get_partial_message(event.message_id)
+        if config['disqualified_role_id'] in [role.id for role in event.member.roles]:
+            await message.remove_reaction('🎉', event.member)
+            embed = discord.Embed(
+                title='Reaction removed',
+                colour=discord.Colour.red(),
+                description=
+                f'Removed reaction from '
+                f'[message](https://discord.com/channels/{event.guild_id}/{event.channel_id}/{event.message_id}) '
+                f'by <@{event.member.id}>'
+            )
+            await self.bot.log_channel.send(embed=embed)
+
     async def cog_check(self, ctx):
         if isinstance(ctx.channel, discord.DMChannel):
             return False
@@ -576,14 +599,15 @@ class Giveaways(commands.Cog):
             embed = discord.Embed(
                 title='Command used',
                 description=f'```\n{ctx.message.content}```',
+                colour=discord.Colour.blue()
             )
             embed.add_field(
                 name="author",
                 value=f'{ctx.author.id} | {str(ctx.author)}'
             )
             embed.add_field(
-                name='channel',
-                value=f'{str(ctx.channel)} | {ctx.message.jump_url}',
+                name='Channel',
+                value=f'{str(ctx.channel)}\n{ctx.message.jump_url}',
                 inline=False
             )
             await self.bot.log_channel.send(embed=embed)
@@ -641,14 +665,6 @@ def __to_seconds__(duration: str) -> int:
             seconds += int(num) * TO_SECONDS_MULTIPLIER[unit]
 
     return seconds
-
-
-def __archive_giveaway__(_id: int, document: dict = None):
-    if not document:
-        document = collection.find(_id)
-
-    collection.delete(_id)
-    collection.archive.insert(document)
 
 
 async def draw_winner(reactions: List[Reaction], bot_user, winner_amount: int = 1) -> List[Union[User, Member]]:

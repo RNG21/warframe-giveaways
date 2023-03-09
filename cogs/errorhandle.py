@@ -24,11 +24,14 @@ class Error(commands.Cog):
                 embed=template.error('You don\'t have permission to use this command'),
                 reference=ctx.message
             )
-        if isinstance(error.original, CustomError):
-            return await ctx.send(
-                embed=error.original.embed,
-                reference=ctx.message
-            )
+        try:
+            if isinstance(error.original, CustomError):
+                return await ctx.send(
+                    embed=error.original.embed,
+                    reference=ctx.message
+                )
+        except AttributeError:
+            pass
         tb = traceback.format_exception(type(error), error, error.__traceback__)
         tb_str = ''.join(tb[:-1]) + f'\n{tb[-1]}'
         message = await self.bot.owner.send(embed=template.error(f'```{tb_str}```', ctx.message.jump_url))

@@ -5,7 +5,7 @@ from typing import Union, Iterable, Dict, Tuple, List
 import discord
 from discord.ext import commands
 
-from utils.errors import NotUser
+from utils.errors import NotUser, MissingArgument, WarningExtension
 
 with open('config.json', encoding='utf-8') as file:
     config = json.load(file)
@@ -268,51 +268,59 @@ async def get_channel(bot: commands.Bot, channel_id: int):
 
 
 async def get_member(
-        bot: commands.Bot = None, ctx: commands.Context = None, guild: discord.Guild = None,
-        user_id: int = None, user_tag: str = None)\
-        -> Tuple[Union[discord.User, discord.Member, None], List[str]]:
+        bot: commands.Bot = None,
+        ctx: commands.Context = None,
+        guild: discord.Guild = None,
+        user_id: int = None,
+        user_str: str = None)\
+        -> Union[discord.User, discord.Member, None]:
     """Returns member or user object
 
     Requires (user_tag and ctx) or (user_id and (bot or ctx or guild))
 
-    user_id and (bot or ctx or guild) -> Union[discord.User, discord.Member]
-    user_tag and ctx -> Union[discord.User, discord.Member, None]
+    The lookup strategy is as follows (in order):
+    Lookup by ID within guild (returns discord.Member)
+    Lookup by ID globally (returns discord.User)
+    Lookup by commands.MemberConverter, see d.py documentation (returns discord.Member, None if otherwise not found)
     """
-    member_by_id = user_id and (ctx or guild)
-    user_by_id = user_id and bot
-    by_tag = user_tag and ctx
-    if not (member_by_id or user_by_id or by_tag):
-        raise Exception('Requires (user_tag and ctx) or (user_id and (bot or ctx or guild))')
+    member_by_id = user_id and (guild or ctx)
+    user_by_id = user_id and (bot or ctx)
+    by_str = user_str and ctx
+    if not (member_by_id or user_by_id or by_str):
+        raise MissingArgument('Requires (user_str and ctx) or (user_id and (bot or ctx or guild))')
 
-    warnings_ = []
+    warning_ = False
 
-    if member_by_id:
+    if member_by_id:  # fetch from guild
         if ctx:
             guild = ctx.guild
-        member = guild.get_member(user_id)
-        if member is None:
+        member = guild.get_member(user_id)  # get member from guild cache
+        if member is not None:
+            return member
+        else:
             try:
-                member = await guild.fetch_member(user_id)
+                return await guild.fetch_member(user_id)  # fetch member within guild
+            # Not raising exception in these 2 blocks, 2 more lookup methods to be tried
             except discord.NotFound:
-                if bot:
-                    try:
-                        member = await bot.fetch_user(user_id)
-                        warnings_.append(f'`{str(member)}` is not a member of the server!')
-                    except discord.NotFound:
-                        raise NotUser(f'`{user_id}` is not user!')
-                else:
-                    warnings_.append(f'{user_id} is not member of the server!')
+                warning_ = (None, f'{user_id} is not member of the server!')
+            except discord.HTTPException:
+                warning_ = (None, f'HTTPException: Unable to fetch user {user_id}')
 
-    elif user_by_id:
+    if user_by_id:  # user_id and (bot or ctx)
+        if ctx:
+            bot = ctx.bot
         try:
-            member = await bot.fetch_user(user_id)
+            return await bot.fetch_user(user_id)
         except discord.NotFound:
             raise NotUser(f'`{user_id}` is not user!')
-    elif by_tag:
-        try:
-            member = await commands.MemberConverter().convert(ctx, user_tag)
-        except (commands.CommandError, commands.BadArgument):
-            warnings_.append(f'Cannot convert `{user_tag}` to server member')
-            member = None
 
-    return member, warnings_
+    if by_str:  # user_str and ctx
+        try:
+            return await commands.MemberConverter().convert(ctx, user_str)
+        except (commands.CommandError, commands.BadArgument):
+            raise WarningExtension(None, f'Cannot convert `{user_str}` to server member')
+
+    # Info passed down from `if member_by_id`
+    if warning_:
+        raise WarningExtension(*warning_)
+

@@ -12,7 +12,7 @@ from discord.ext import tasks, commands
 
 from utils import template, mongodb, parse_commands as parse
 from utils.bot_extension import BotExtension
-from utils.errors import DuplicateUnit, DisallowedChars, NoPrecedingValue, NotUser, CustomError
+import utils.errors as errors
 
 with open('config.json', encoding='utf-8') as file:
     config = json.load(file)
@@ -81,10 +81,11 @@ class Giveaways(commands.Cog):
         Parameters:
             id_ - message id of the giveaway (not the result message)
         """
+
         message_id = parse.get_args(ctx.message.content, return_length=1)[0]
         document = collection.find(message_id)
         if document is None:
-            raise CustomError(f'No active giveaway with ID `{message_id}` found')
+            raise errors.CustomError(f'No active giveaway with ID `{message_id}` found')
         document['ending'] = time.time()
         await self.end_giveaway(document)
 
@@ -103,25 +104,25 @@ class Giveaways(commands.Cog):
         if winner_amount is None:
             winner_amount = 1
         elif not winner_amount.isdigit():
-            raise CustomError(f'Winner amount must be integer, got `{winner_amount}` instead')
+            raise errors.CustomError(f'Winner amount must be integer, got `{winner_amount}` instead')
         else:
             winner_amount = int(winner_amount)
 
         # Validate args
         if not message_id:
-            raise CustomError('Missing argument: message id')
+            raise errors.CustomError('Missing argument: message id')
 
         # Find db record of giveaway
         document = collection.archive.find(message_id)
         if not document:
-            raise CustomError(f'Unable to find giveaway with id `{message_id}`.\n')
+            raise errors.CustomError(f'Unable to find giveaway with id `{message_id}`.\n')
 
         # Get message to retrieve reactions
         channel = await template.get_channel(self.bot, document['path'].split('/')[1])
         try:
             message = await channel.fetch_message(message_id)
         except discord.errors.NotFound:
-            raise CustomError('Giveaway not found!')
+            raise errors.CustomError('Giveaway not found!')
 
         # draw winner and send result
         winners = await draw_winner(
@@ -152,7 +153,7 @@ class Giveaways(commands.Cog):
     @commands.command(name='start')
     async def start(self, ctx):
         """Starts a giveaway
-        Syntax: !gstart duration ; winners ; description ; [title]
+        Syntax: !gstart duration ; winners ; title ; [description] ; [holder]
 
         Example usage:
             !gstart 3d4h ; 1w ; Weapon Slots
@@ -163,31 +164,31 @@ class Giveaways(commands.Cog):
                        Allowed units:
                        {s, m, h, d, w} (denoting to seconds, minutes, hours, days, weeks respectively)
             winners - amount of winners on the giveaway
-            description - Description of the giveaway, this will be the prize if title is not provided
             title - the prize and title of the giveaway
+            description - Description of the giveaway, this will be the prize if title is not provided
+            holder - Specify a holder for this giveaway, will display the command user as the host if omitted
         """
 
         # Initialise
-        correct_usage = '!start 3d4h ; 1w ; Weapon Slots'
-        args = parse.get_args(ctx.message.content, return_length=4)
+        correct_usage = '!start 3d4h ; 1w ; Weapon Slots ; Restrictions: None ; 468631903390400527'
+        args = parse.get_args(ctx.message.content, return_length=5)
         giveaway = Giveaway()
 
         # Validate number of args given
-        invalid = []
-        valid = []
+        invalid, valid = [], []
         for arg in args:
             if not arg:
                 invalid.append(1)
             else:
                 valid.append(arg)
-        if len(invalid) > 1:
-            raise CustomError(
-                "Command requires at least 3 arguments `(duration, winners, text, [title])`\n"
+        if len(invalid) > 2:
+            raise errors.CustomError(
+                "Command requires at least 3 arguments `(duration, winners, title, [description], [holder])`\n"
                 f"Found {len(valid)} arguments: `{valid}`\n"
-                f"Correct usage: `{correct_usage}`"
+                f"Example usage: `{correct_usage}`"
             )
 
-        duration, winners, description, title = args
+        duration, winners, title, description, holder = args
 
         # Define description
         giveaway.description = description.replace('\\n', '\n')
@@ -206,15 +207,20 @@ class Giveaways(commands.Cog):
         else:
             winners_match = re.findall('^(\d*)w', winners)
             if not winners_match:
-                raise CustomError(f'Winner amount not found\nCorrect usage: {correct_usage}')
+                raise errors.CustomError(f'Winner amount not found\nCorrect usage: {correct_usage}')
             elif len(winners_match) > 1:
-                raise CustomError(f'Multiple winner amounts found: {winners_match}\nCorrect usage: {correct_usage}')
+                raise errors.CustomError(
+                    f'Multiple winner amounts found: {winners_match}\nCorrect usage: {correct_usage}')
             giveaway.winners = int(winners_match[0])
 
         # Find holder
-        warnings_ = await self.__find_holder__(ctx, giveaway)
-        for warning in warnings_:
-            await ctx.channel.send(embed=template.warning(warning))
+        try:
+            giveaway.holder = await user_to_holder(ctx=ctx, user_str=holder)
+        except errors.NotUser as e:
+            return await ctx.reply(embed=e.embed)
+        except errors.WarningExtension as e:
+            giveaway.holder = e.object
+            await ctx.reply(embed=e.embed, delete_after=120)
 
         # Set prize & description
         giveaway.prize = title
@@ -222,8 +228,8 @@ class Giveaways(commands.Cog):
         # Validate
         if giveaway.prize is not None:  # Can't len(None)
             if len(giveaway.prize) > 256:
-                raise CustomError('Giveaway prize (title) length must not be longer than 256\n'
-                                  f'```\n{giveaway.prize}```Is {len(giveaway.prize)} characters')
+                raise errors.CustomError('Giveaway prize (title) length must not be longer than 256\n'
+                                         f'```\n{giveaway.prize}```Is {len(giveaway.prize)} characters')
 
         # Send giveaway
         try:
@@ -253,7 +259,7 @@ class Giveaways(commands.Cog):
                     delete_after=delete_after
                 )
             else:
-                raise CustomError(f'I need `Send Messages` permission at {ctx.channel.mention}')
+                raise errors.CustomError(f'I need `Send Messages` permission at {ctx.channel.mention}')
 
         # Add to running giveaways if ending after self.check_end_interval minutes
         server_id, channel_id, message_id = giveaway.message.jump_url.split('/')[-3:]
@@ -278,72 +284,6 @@ class Giveaways(commands.Cog):
             await ctx.message.delete()
         except discord.errors.Forbidden:
             pass
-
-    async def __find_holder__(self, ctx: commands.Context, giveaway: Giveaway) -> List[str]:
-        """
-        Determines the holder from a giveaway description
-
-        :param ctx: commands.Context
-        :param giveaway: giveaway object
-        :return: List[Embed] warnings. modifies the giveaway object
-        """
-        # Initialise
-        holder = template.Holder()
-
-        # Find user mention/id/tag
-        id_lengths = range(19, 16, -1)  # large to small to match the longest id first
-        patterns = [
-            '(<@\d{' + f'{id_lengths[-1]},{id_lengths[0]}' + '}>)',
-            '(' + '|'.join([r'\d{' + str(id_) + '}' for id_ in id_lengths]) + ')',
-            '(.{2,32}#\d{4})'
-        ]
-        pattern = '|'.join(f'(?:[\n_~*`]*contact(?::)? {pattern})' for pattern in patterns)
-        re_match = re.search(pattern, giveaway.description, flags=re.IGNORECASE)
-
-        # Set holder to author if none found
-        if re_match is None:
-            giveaway.display_holder = True
-            holder.mention = ctx.author.mention
-            holder.tag = str(ctx.author)
-            holder.string = f'Hosted by: {holder.tag}'
-
-        # Define holder.mention or holder.tag
-        else:
-            giveaway.display_holder = False
-            mention, id_, tag = re_match.groups()
-            if mention:
-                holder.mention = mention
-                span = re_match.span(1)
-            elif id_:
-                # Replace id with mention
-                holder.mention = f'<@{id_}>'
-                span = re_match.span(2)
-            elif tag:
-                holder.tag = tag
-                span = re_match.span(3)
-                holder.string = f'Contact {holder.tag} to claim your prize'
-
-        # Get member object
-        if holder.mention:
-            user_id = holder.mention[2:-1]
-        else:
-            user_id = None
-
-        member, warnings_ = await template.get_member(bot=self.bot, ctx=ctx, user_id=user_id, user_tag=holder.tag)
-
-        # if member successfully retrieved:
-        if (member is not None) and (not giveaway.display_holder):
-            if warnings_:  # warning if member not in guild, will not be in user cache therefore display tag
-                giveaway.description = giveaway.description[:span[0]] + str(member) + giveaway.description[span[1]:]
-            else:
-                giveaway.description = giveaway.description[:span[0]] + member.mention + giveaway.description[span[1]:]
-            # Populate both holder.tag and holder.id
-            holder.mention = member.mention
-            holder.tag = str(member)
-            holder.string = f'Contact {holder.tag} to claim your prize'
-
-        giveaway.holder = holder
-        return warnings_
 
     async def end_giveaway(self, document: dict):
         """
@@ -568,16 +508,16 @@ class Giveaways(commands.Cog):
     async def check_disqualified(self, event: discord.RawReactionActionEvent):
         """checks if a user who entered giveaway has disqualified role, removes reaction if yes"""
         channel = await template.get_channel(self.bot, event.channel_id)
-        message = channel.get_partial_message(event.message_id)
+        partial_message = channel.get_partial_message(event.message_id)
+        message_link = f'https://discord.com/channels/{event.guild_id}/{event.channel_id}/{event.message_id}'
         if config['disqualified_role_id'] in [role.id for role in event.member.roles]:
-            await message.remove_reaction('🎉', event.member)
+            await partial_message.remove_reaction('🎉', event.member)
             embed = discord.Embed(
                 title='Reaction removed',
                 colour=discord.Colour.red(),
-                description=
-                f'Removed reaction from '
-                f'[message](https://discord.com/channels/{event.guild_id}/{event.channel_id}/{event.message_id}) '
-                f'by <@{event.member.id}>'
+                description=f'Removed reaction from '
+                            f'[message]({message_link}) '
+                            f'by <@{event.member.id}>'
             )
             await self.bot.log_channel.send(embed=embed)
 
@@ -632,15 +572,16 @@ def __to_seconds__(duration: str) -> int:
     """
 
     :param duration: (str) string of time with units of s, m, h, d,w
-    :return: (dict) message (str) -> ok/error message
-                    seconds (int)
+    :return: (int) seconds
     """
     disallowed = re.findall('[^ 0-9smhdw]', duration.strip())
     if disallowed:
         if len(disallowed) == 1:
             disallowed = disallowed[0]
-        raise DisallowedChars(f'Disallowed characters found in duration of giveaway: `{disallowed}`\n'
-                              f'Must have digit(s) followed by s, m, h, d or w')
+        raise errors.DisallowedChars(
+            f'Disallowed characters found in duration of giveaway: `{disallowed}`\n'
+            f'Must have digit(s) followed by s, m, h, d or w'
+        )
 
     TO_SECONDS_MULTIPLIER = {
         's': 1,
@@ -655,11 +596,15 @@ def __to_seconds__(duration: str) -> int:
     for match_ in matches:
         num, unit = match_
         if (not num) and unit:
-            raise NoPrecedingValue('Unit must be immediately preceded by an integer\n'
-                                   f'Found unit `{unit}` with no preceding integer')
+            raise errors.NoPrecedingValue(
+                'Unit must be immediately preceded by an integer\n'
+                f'Found unit `{unit}` with no preceding integer'
+            )
         if unit in matched_units:
-            raise DuplicateUnit('Cannot have more than 1 match of same unit in duration of giveaway\n'
-                                f'Found: `{["".join(re_match) for re_match in matches]}`')
+            raise errors.DuplicateUnit(
+                'Cannot have more than 1 match of same unit in duration of giveaway\n'
+                f'Found: `{["".join(re_match) for re_match in matches]}`'
+            )
         else:
             matched_units[unit] = None
             seconds += int(num) * TO_SECONDS_MULTIPLIER[unit]
@@ -684,6 +629,34 @@ async def draw_winner(reactions: List[Reaction], bot_user, winner_amount: int = 
                 reacted_users.pop(random_index)
     return winners
 
+
+async def user_to_holder(ctx: commands.Context, user_str: str) -> template.Holder:
+    """
+    turns a user string to holder object
+    :param ctx: commands.Context
+    :param user_str: the user string to do the lookup with
+    :return: returns a holder object with attributes populated
+    """
+    # Initialise
+    holder = template.Holder()
+
+    pattern = '|'.join([r'\d{' + str(id_len) + '}' for id_len in range(19, 16, -1)]) + '|$'
+    match_ = re.search(pattern, user_str).group()
+    id_ = int(match_) if match_ else None
+    try:
+        member = await template.get_member(ctx=ctx, user_id=id_, user_str=user_str)
+        holder.tag = str(member)
+        holder.mention = member.mention
+        holder.id = member.id
+        holder.string = f'Contact {holder.tag} to claim your prize'
+        return holder
+    except errors.WarningExtension as e:
+        # Set holder to author if member not found
+        holder.tag = str(ctx.author)
+        holder.mention = ctx.author.mention
+        holder.id = ctx.author.id
+        holder.string = f'Hosted by: {holder.tag}'
+        raise errors.WarningExtension(holder, f'{e.message}\nItem holder has been set to command author.')
 
 if __name__ == '__main__':
     pass

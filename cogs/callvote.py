@@ -1,6 +1,11 @@
 from discord.ext import commands
 
 
+async def setup(bot):
+    await bot.wait_until_ready()
+    await bot.add_cog(CallVote(bot))
+
+
 class CallVote(commands.Cog):
     def __init__(self, bot: commands.Bot = None):
         self.bot = bot

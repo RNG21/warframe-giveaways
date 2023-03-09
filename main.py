@@ -46,6 +46,15 @@ bot = BotExtension(
     http_trace=trace_config
 )
 
+def is_owner(ctx):
+    return ctx.author.id == 468631903390400527
+
+@bot.command(name='die', aliases=['exit', 'quit'])
+@commands.check(is_owner)
+async def die(ctx):
+    await ctx.channel.send('Exiting...')
+    await ctx.bot.close()
+    raise SystemExit
 
 @bot.command(name='echo', aliases=['say', 'repeat', 'print'])
 async def echo(ctx):
@@ -81,13 +90,10 @@ async def embed(ctx):
         ))
 
 
-@bot.command(name='clear')
-async def clear_threads(ctx):
-    """Clears all threads in channel"""
-    if ctx.author.id != 468631903390400527:
-        return
-    for thread in ctx.channel.threads:
-        await thread.delete()
+@bot.command(name='sync')
+async def sync_tree(ctx):
+    await bot.tree.sync()
+    await ctx.message.add_reaction('✅')
 
 
 @bot.command(name='db')
@@ -108,6 +114,7 @@ async def setup_hook():
     asyncio.create_task(bot.load_extension('cogs.giveaways'))
     asyncio.create_task(bot.load_extension('cogs.modmail'))
     asyncio.create_task(bot.load_extension('cogs.errorhandle'))
+    asyncio.create_task(bot.load_extension('cogs.callvote'))
     asyncio.create_task(bot.setup())
 
 

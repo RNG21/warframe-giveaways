@@ -1,11 +1,21 @@
+from typing import Union, Literal
+
 import utils.template as template
+
 
 class CustomError(Exception):
     """To be used as superclass for errors to be identified as a custom error"""
-    def __init__(self, message='', jump_url=''):
+
+    def __init__(self, message='', jump_url='', *, type_: Literal['error', 'warning'] = 'error'):
+        if type_ not in ['error', 'warning']:
+            raise Exception("type_ not in ['error', 'warning']")
+        self.type = type_
         self.message = message
         self.jump_url = jump_url
-        self.__embed = template.error(message, jump_url)
+        if self.type == 'error':
+            self.__embed = template.error(message, jump_url)
+        else:
+            self.__embed = template.warning(message)
 
     def __str__(self):
         return self.message
@@ -22,23 +32,34 @@ class CustomError(Exception):
             message, jump_url = args
         except ValueError:
             raise CustomError()
-        self.__embed = template.error(message, jump_url)
+        if self.type == 'error':
+            self.__embed = template.error(message, jump_url)
+        else:
+            self.__embed = template.warning(message)
+
 
 class DuplicateUnit(CustomError):
     """Raised when duplicate unit found in a giveaway's duration argument"""
-    pass
 
 
 class DisallowedChars(CustomError):
     """Raised when disallowed characters found in a giveaway's duration argument"""
-    pass
 
 
 class NoPrecedingValue(CustomError):
     """Raised when no preceding digits are found before a unit in a giveaway's duration argument"""
-    pass
 
 
 class NotUser(CustomError):
     """Raised when the id given does not represent a user"""
-    pass
+
+
+class MissingArgument(Exception):
+    """Raised when insufficient arguments were provided **internally within the program**"""
+
+
+class WarningExtension(CustomError):
+    """Warning extended with an attribute to pass on values"""
+    def __init__(self, object_, *args):
+        self.object = object_
+        super().__init__(*args, type_='warning')

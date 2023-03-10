@@ -4,8 +4,9 @@ from typing import Union, Dict, Any
 import pymongo
 from bson.objectid import ObjectId
 
-with open('config.json', encoding='utf-8') as file:
-    conn = json.load(file)['connection_string']
+with open(r'config.json', encoding='utf-8') as file:
+    config = json.load(file)
+    conn = config['connection_string']
 
 class Local:
     cluster = pymongo.MongoClient("mongodb://localhost:27017/")
@@ -20,17 +21,20 @@ class Cloud:
     database = cluster['discord']
     collection = database['WFG']
     archive = database['archived_giveaways']
+    dq = database['DQs']
 
 class TestCloud:
     cluster = cluster
     database = cluster['Test']
     collection = database['WFG']
     archive = database['archived_giveaways']
+    dq = database['DQs']
 
 class Collection:
     def __init__(self, instance):
         self.collection = instance.collection
         self.archive = Archive(instance.archive)
+        self.dq = Dq(instance.dq)
 
     def delete(self, message_id: Union[int, ObjectId]):
         """Deletes a document by _id"""
@@ -67,12 +71,20 @@ class Collection:
         return self.collection.replace_one({'_id': _id}, dict_, upsert=True)
 
 class Archive(Collection):
-    def __init__(self, collection):  # noqa | using super.init will cause recursion
+    def __init__(self, collection):
         self.collection = collection
 
+class Dq(Collection):
+    def __init__(self, collection):
+        self.collection = collection
+
+instance = {
+    'test': TestCloud,
+    'production': Cloud
+}[config['db_instance']]
+collection = Collection(instance)
 
 if __name__ == '__main__':
-    import json
-
     collection = Collection(TestCloud)
-    print(json.dumps(collection.archive.find('1020279901099663401'), indent=4, ensure_ascii=False))
+    collection.truncate()
+    collection.archive.truncate()

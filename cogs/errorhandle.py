@@ -3,7 +3,7 @@ import discord
 import traceback
 
 from utils import template
-from utils.errors import CustomError
+import utils.errors as errors
 
 
 class Error(commands.Cog):
@@ -11,9 +11,6 @@ class Error(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-
-    # NOTE: By moving most of discord_templates here, whenever a custom error is raised,
-    # you can just return the embed in the context that the error was raised in.
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
@@ -25,13 +22,16 @@ class Error(commands.Cog):
                 reference=ctx.message
             )
         try:
-            if isinstance(error.original, CustomError):
+            if isinstance(error.original, errors.CustomError):
                 return await ctx.send(
                     embed=error.original.embed,
                     reference=ctx.message
                 )
         except AttributeError:
             pass
+        if isinstance(error, (commands.errors.MissingRequiredArgument, errors.MissingArgument)):
+            msg = str(error) if str(error) else 'Missing required argument'
+            await ctx.send(embed=template.error(msg))
         tb = traceback.format_exception(type(error), error, error.__traceback__)
         tb_str = ''.join(tb[:-1]) + f'\n{tb[-1]}'
         message = await self.bot.owner.send(embed=template.error(f'```{tb_str}```', ctx.message.jump_url))

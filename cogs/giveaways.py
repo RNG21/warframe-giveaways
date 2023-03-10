@@ -10,18 +10,14 @@ import discord
 from discord import User, Member, Reaction
 from discord.ext import tasks, commands
 
-from utils import template, mongodb, parse_commands as parse
+from utils import template
+from utils import mongodb as db
+from utils import parse_commands as parse
 from utils.bot_extension import BotExtension
-import utils.errors as errors
+from utils import errors
 
 with open('config.json', encoding='utf-8') as file:
     config = json.load(file)
-
-instance = {
-    'test': mongodb.TestCloud,
-    'production': mongodb.Cloud
-}[config['db_instance']]
-collection = mongodb.Collection(instance)
 
 
 async def setup(bot: BotExtension):
@@ -63,7 +59,7 @@ class Giveaways(commands.Cog):
     def __init__(self, bot: BotExtension):
         self.bot = bot
         self.pending_end = {}
-        self.delete_giveaway = {}
+        self.stop_ending_process = {}
         self.thread_channel = None
 
     @commands.command(name='edit_giveaway')
@@ -82,8 +78,8 @@ class Giveaways(commands.Cog):
             id_ - message id of the giveaway (not the result message)
         """
 
-        message_id = parse.get_args(ctx.message.content, return_length=1)[0]
-        document = collection.find(message_id)
+        message_id = parse.get_args(ctx.message.content, return_length=1, required=1)[0]
+        document = db.collection.find(message_id)
         if document is None:
             raise errors.CustomError(f'No active giveaway with ID `{message_id}` found')
         document['ending'] = time.time()
@@ -100,7 +96,7 @@ class Giveaways(commands.Cog):
             id_ - message id of the giveaway (not the result message)
             [winner_amount] - amount of new winners
         """
-        message_id, winner_amount = parse.get_args(ctx.message.content, return_length=2)
+        message_id, winner_amount = parse.get_args(ctx.message.content, return_length=2, required=1)
         if winner_amount is None:
             winner_amount = 1
         elif not winner_amount.isdigit():
@@ -113,7 +109,7 @@ class Giveaways(commands.Cog):
             raise errors.CustomError('Missing argument: message id')
 
         # Find db record of giveaway
-        document = collection.archive.find(message_id)
+        document = db.collection.archive.find(message_id)
         if not document:
             raise errors.CustomError(f'Unable to find giveaway with id `{message_id}`.\n')
 
@@ -185,19 +181,22 @@ class Giveaways(commands.Cog):
             raise errors.CustomError(
                 "Command requires at least 3 arguments `(duration, winners, title, [description], [holder])`\n"
                 f"Found {len(valid)} arguments: `{valid}`\n"
-                f"Example usage: `{correct_usage}`"
+                f"Example usage: `{correct_usage}`\n"
+                "Type `g!help start` for more info"
             )
 
         duration, winners, title, description, holder = args
 
         # Define description
+        if description is None:
+            description = ''
         giveaway.description = description.replace('\\n', '\n')
 
         # Compute and validate duration
         if duration.isdigit():
             duration = int(duration)
         else:
-            duration = __to_seconds__(duration)
+            duration = template.to_seconds(duration)
 
         giveaway.duration = int(duration + time.time())
 
@@ -216,8 +215,6 @@ class Giveaways(commands.Cog):
         # Find holder
         try:
             giveaway.holder = await user_to_holder(ctx=ctx, user_str=holder)
-        except errors.NotUser as e:
-            return await ctx.reply(embed=e.embed)
         except errors.WarningExtension as e:
             giveaway.holder = e.object
             await ctx.reply(embed=e.embed, delete_after=120)
@@ -277,8 +274,8 @@ class Giveaways(commands.Cog):
 
         if not giveaway.duration > self.check_end_interval * 60 + time.time():
             asyncio.create_task(self.end_giveaway(document))
-        collection.insert(document)
-        collection.archive.insert(document)
+        db.collection.insert(document)
+        db.collection.archive.insert(document)
 
         try:
             await ctx.message.delete()
@@ -291,10 +288,14 @@ class Giveaways(commands.Cog):
         :param document:
         :return:
         """
+        override = False
         # method might be called from different places, return if instance already exist
         if document['_id'] in self.pending_end:
+            if document['ending'] != self.pending_end[document['_id']]:
+                self.stop_ending_process[document['_id']] = ''
+                override = True
             # redundancy, method may also be called again if failed to end in previous call
-            if self.pending_end[document['_id']] + 10 > time.time():
+            elif self.pending_end[document['_id']] + 10 > time.time():
                 return
         self.pending_end[document['_id']] = document['ending']
 
@@ -302,9 +303,8 @@ class Giveaways(commands.Cog):
         if wait_duration > 0:
             await asyncio.sleep(wait_duration)
 
-        # return if giveaway was deleted during above sleep
-        if document['_id'] in self.delete_giveaway:
-            collection.delete(document['_id'])
+        # return if ended in another instance
+        if document['_id'] in self.stop_ending_process and not override:
             return
 
         server_id, channel_id, message_id = [int(_id) for _id in document['path'].split('/')]
@@ -313,7 +313,7 @@ class Giveaways(commands.Cog):
         try:
             channel = await template.get_channel(self.bot, channel_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException, discord.InvalidData) as error:
-            collection.delete(document['_id'])
+            db.collection.delete(document['_id'])
             return self.bot.owner.send(
                 embed=template.error(
                     f'{type(error).__name__}\n```{document}```'
@@ -327,7 +327,7 @@ class Giveaways(commands.Cog):
         # if message not found try sending error message to channel
         except discord.NotFound:
             try:
-                collection.delete(document['_id'])
+                db.collection.delete(document['_id'])
                 return await channel.send(
                     embed=template.error(
                         'Hmm I can\'t seem to find a giveaway that\'s supposed to end at this time\n'
@@ -337,7 +337,7 @@ class Giveaways(commands.Cog):
                 )
             # if no perm to send error message, send to owner
             except discord.Forbidden:
-                collection.delete(document['_id'])
+                db.collection.delete(document['_id'])
                 return await self.bot.owner.send(
                     f'Forbidden on sending following error\n'
                     f'Giveaway not found\n```{document}```'
@@ -346,7 +346,7 @@ class Giveaways(commands.Cog):
         except Exception as error:
             tb = traceback.format_exception(type(error), error, error.__traceback__)
             tb_str = ''.join(tb[:-1]) + f'\n{tb[-1]}'
-            collection.delete(document['_id'])
+            db.collection.delete(document['_id'])
             return await self.bot.owner.send(
                 f'```json\n{json.dumps(document, indent=4, ensure_ascii=False)}```',
                 embed=template.error(f'Failed to end giveaway\n```{tb_str}```')
@@ -363,13 +363,13 @@ class Giveaways(commands.Cog):
             embed.colour = None
             await message.edit(embed=embed)
         else:
-            collection.delete(document['_id'])
+            db.collection.delete(document['_id'])
             return await channel.send(embed=template.no_winner(jump_url, '**Warning:**\nEmbed on giveaway was deleted'))
 
         # Determine winner
         winners = await draw_winner(message.reactions, self.bot.user, document['winners'])
         if not winners:
-            collection.delete(document['_id'])
+            db.collection.delete(document['_id'])
             return await channel.send(embed=template.no_winner(jump_url))
 
         # Extract giveaway title and description
@@ -385,7 +385,7 @@ class Giveaways(commands.Cog):
             winners=winners,
             jump_url=jump_url
         )
-        collection.delete(document['_id'])
+        db.collection.delete(document['_id'])
 
     async def wait_and_mention(
             self,
@@ -495,17 +495,17 @@ class Giveaways(commands.Cog):
 
     @tasks.loop(minutes=check_end_interval)
     async def check_giveaway_end(self):
-        documents = collection.find(None, True)  # Returns all result in collection as list
+        documents = db.collection.find(None, True)  # Returns all result in collection as list
         for document in documents:
             if document['ending'] < time.time() + self.check_end_interval * 60:
                 asyncio.create_task(self.end_giveaway(document))
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, event):
-        if collection.archive.find(str(event.message_id)) is not None:
+        if db.collection.archive.find(str(event.message_id)) is not None:
             await self.check_disqualified(event)
 
-    async def check_disqualified(self, event: discord.RawReactionActionEvent):
+    async def check_disqualified(self, event: discord.RawReactionActionEvent) -> None:
         """checks if a user who entered giveaway has disqualified role, removes reaction if yes"""
         channel = await template.get_channel(self.bot, event.channel_id)
         partial_message = channel.get_partial_message(event.message_id)
@@ -525,32 +525,11 @@ class Giveaways(commands.Cog):
         if isinstance(ctx.channel, discord.DMChannel):
             return False
 
-        allowed = False
-        if ctx.author == ctx.guild.owner:
-            allowed = True
+        allowed = template.is_giveaway_staff(ctx)
 
-        for role in ctx.author.roles:
-            if role.permissions.administrator:
-                allowed = True
-            elif role.id in config['giveaway_role_ids']:
-                allowed = True
-
+        # Log command usage
         if allowed:
-            embed = discord.Embed(
-                title='Command used',
-                description=f'```\n{ctx.message.content}```',
-                colour=discord.Colour.blue()
-            )
-            embed.add_field(
-                name="author",
-                value=f'{ctx.author.id} | {str(ctx.author)}'
-            )
-            embed.add_field(
-                name='Channel',
-                value=f'{str(ctx.channel)}\n{ctx.message.jump_url}',
-                inline=False
-            )
-            await self.bot.log_channel.send(embed=embed)
+            await self.bot.log_channel.send(embed=template.command_used(ctx))
 
         return allowed
 
@@ -558,58 +537,6 @@ class Giveaways(commands.Cog):
         if config['modmail_channel_id']:
             self.thread_channel = await template.get_channel(self.bot, config['modmail_channel_id'])
         self.check_giveaway_end.start()
-
-
-def __unformat__(string):
-    to_remove = ['_', '~', '*', '`']
-    unformatted = string
-    for str_ in to_remove:
-        unformatted = unformatted.replace(str_, '')
-    return unformatted
-
-
-def __to_seconds__(duration: str) -> int:
-    """
-
-    :param duration: (str) string of time with units of s, m, h, d,w
-    :return: (int) seconds
-    """
-    disallowed = re.findall('[^ 0-9smhdw]', duration.strip())
-    if disallowed:
-        if len(disallowed) == 1:
-            disallowed = disallowed[0]
-        raise errors.DisallowedChars(
-            f'Disallowed characters found in duration of giveaway: `{disallowed}`\n'
-            f'Must have digit(s) followed by s, m, h, d or w'
-        )
-
-    TO_SECONDS_MULTIPLIER = {
-        's': 1,
-        'm': 60,
-        'h': 3600,
-        'd': 86400,
-        'w': 604800
-    }
-    matched_units = {}
-    seconds = 0
-    matches = re.findall(f'(\d*)([{"".join([unit for unit in TO_SECONDS_MULTIPLIER])}])', duration, re.IGNORECASE)
-    for match_ in matches:
-        num, unit = match_
-        if (not num) and unit:
-            raise errors.NoPrecedingValue(
-                'Unit must be immediately preceded by an integer\n'
-                f'Found unit `{unit}` with no preceding integer'
-            )
-        if unit in matched_units:
-            raise errors.DuplicateUnit(
-                'Cannot have more than 1 match of same unit in duration of giveaway\n'
-                f'Found: `{["".join(re_match) for re_match in matches]}`'
-            )
-        else:
-            matched_units[unit] = None
-            seconds += int(num) * TO_SECONDS_MULTIPLIER[unit]
-
-    return seconds
 
 
 async def draw_winner(reactions: List[Reaction], bot_user, winner_amount: int = 1) -> List[Union[User, Member]]:
@@ -644,19 +571,16 @@ async def user_to_holder(ctx: commands.Context, user_str: str) -> template.Holde
     match_ = re.search(pattern, user_str).group()
     id_ = int(match_) if match_ else None
     try:
-        member = await template.get_member(ctx=ctx, user_id=id_, user_str=user_str)
-        holder.tag = str(member)
-        holder.mention = member.mention
-        holder.id = member.id
-        holder.string = f'Contact {holder.tag} to claim your prize'
+        member = await template.get_user(ctx=ctx, user_id=id_, user_str=user_str)
+        holder.populate(member, f'Contact {str(member)} to claim your prize')
         return holder
     except errors.WarningExtension as e:
         # Set holder to author if member not found
-        holder.tag = str(ctx.author)
-        holder.mention = ctx.author.mention
-        holder.id = ctx.author.id
-        holder.string = f'Hosted by: {holder.tag}'
+        holder.populate(ctx.author, f'Hosted by: {str(ctx.author)}')
         raise errors.WarningExtension(holder, f'{e.message}\nItem holder has been set to command author.')
+    except errors.MissingArgument:  # Holder not given in command
+        holder.populate(ctx.author, f'Hosted by: {str(ctx.author)}')
+        return holder
 
 if __name__ == '__main__':
     pass

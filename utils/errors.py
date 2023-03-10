@@ -1,6 +1,6 @@
 from typing import Union, Literal
 
-import utils.template as template
+from utils import template
 
 
 class CustomError(Exception):
@@ -54,8 +54,8 @@ class NotUser(CustomError):
     """Raised when the id given does not represent a user"""
 
 
-class MissingArgument(Exception):
-    """Raised when insufficient arguments were provided **internally within the program**"""
+class MissingArgument(CustomError):
+    """Raised when insufficient arguments were provided"""
 
 
 class WarningExtension(CustomError):

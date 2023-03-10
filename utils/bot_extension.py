@@ -18,6 +18,6 @@ class BotExtension(commands.Bot):
 
     async def setup(self):
         await self.wait_until_ready()
-        self.owner = await template.get_member(bot=self, user_id=468631903390400527)
+        self.owner = await template.get_user(bot=self, user_id=468631903390400527)
         if config.get('log_channel_id'):
             self.log_channel = await template.get_channel(bot=self, channel_id=config['log_channel_id'])

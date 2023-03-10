@@ -2,6 +2,10 @@ import re
 import json
 from typing import Union, List
 
+from discord.ext import commands
+
+from utils import errors
+
 if __name__ == '__main__':
     import os.path
     with open(os.path.dirname(__file__) + '/../config.json', encoding='utf-8') as file:
@@ -19,7 +23,9 @@ def get_args(content: str,
              arg_delimiter: str = config['arg_delimiter'],
              prefixes: List[str] = config['prefix'],
              return_length: int = None,
-             join_excess: bool = False
+             required: int = 0,
+             join_excess: bool = False,
+             error_msg: str = ''
              ) -> Union[list, str]:
     """Gets argument from message content
 
@@ -27,7 +33,9 @@ def get_args(content: str,
     :param arg_delimiter: delimiter for arguments, if None, all arguments returned in 1 string
     :param prefixes: prefix of command
     :param return_length: length of return value will be fixed to this value, ignored if arg_delimiter is None.
+    :param required: amount of required arguments
     :param join_excess: if True: args after return_length-th arg will be joined together as the last arg. else discards
+    :param error_msg: the error message should an error be thrown
     :return: arguments
     """
     prefix_match = re.search(f'({"|".join(prefix for prefix in prefixes)})( )?', content)
@@ -41,18 +49,27 @@ def get_args(content: str,
 
     command_end = content[prefix_end:].find(' ')
     args = content[prefix_end+command_end+1:]
-    if (command_end == -1) or (args.strip() == ''):
+    if (command_end == -1) or (args.strip() == ''):  # No arguments
+        if required:
+            if error_msg == '':
+                error_msg = f'{required} arguments required, 0 provided'
+            raise errors.MissingArgument(error_msg)
         if return_length:
-            return [None for _ in range(return_length)]
+            return ['' for _ in range(return_length)]
         return []
 
     if not arg_delimiter:
         return args
 
     output = [arg.strip(' \t') for arg in args.split(arg_delimiter)]
+    if len(output) < required:
+        if error_msg == '':
+            error_msg = f'{required} arguments required.\n' \
+                        f'{len(output)} provided: `{output}`'
+        raise errors.MissingArgument(error_msg)
     if return_length:
         if len(output) < return_length:
-            output.extend(None for _ in range(return_length-len(output)))
+            output.extend('' for _ in range(return_length-len(output)))
         elif len(output) > return_length:
             if join_excess:
                 output = [*output[:return_length-1], ''.join(output[return_length:])]

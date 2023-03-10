@@ -3,9 +3,10 @@ import re
 from typing import Union, Iterable, Dict, Tuple, List
 
 import discord
+from discord import User, Member
 from discord.ext import commands
 
-from utils.errors import NotUser, MissingArgument, WarningExtension
+from utils import errors
 
 with open('config.json', encoding='utf-8') as file:
     config = json.load(file)
@@ -19,6 +20,12 @@ class Holder(object):
 
     def __str__(self):
         return self.string
+
+    def populate(self, user: Union[User, Member], string: str):
+        """Takes a user object and populates the attributes of the current instance"""
+        self.tag = str(user)
+        self.mention = user.mention
+        self.string = string
 
 
 def error(message: str, jump_url: str = '') -> discord.Embed:
@@ -167,6 +174,24 @@ def no_winner(jump_url, message: str = '') -> discord.Embed:
     return embed
 
 
+def command_used(ctx) -> discord.Embed:
+    embed = discord.Embed(
+        title='Command used',
+        description=f'```\n{ctx.message.content}```',
+        colour=discord.Colour.blue()
+    )
+    embed.add_field(
+        name="author",
+        value=f'{ctx.author.id} | {str(ctx.author)}'
+    )
+    embed.add_field(
+        name='Channel',
+        value=f'{str(ctx.channel)}\n{ctx.message.jump_url}',
+        inline=False
+    )
+    return embed
+
+
 async def create_thread(
         channel: discord.TextChannel,
         name: str,
@@ -267,14 +292,16 @@ async def get_channel(bot: commands.Bot, channel_id: int):
     return channel
 
 
-async def get_member(
+async def get_user(
+        *,
         bot: commands.Bot = None,
         ctx: commands.Context = None,
         guild: discord.Guild = None,
         user_id: int = None,
-        user_str: str = None)\
+        user_str: str = None,
+        member_only: bool = False)\
         -> Union[discord.User, discord.Member, None]:
-    """Returns member or user object
+    """Returns member or user object (member only if member_only is True)
 
     Requires (user_tag and ctx) or (user_id and (bot or ctx or guild))
 
@@ -284,10 +311,10 @@ async def get_member(
     Lookup by commands.MemberConverter, see d.py documentation (returns discord.Member, None if otherwise not found)
     """
     member_by_id = user_id and (guild or ctx)
-    user_by_id = user_id and (bot or ctx)
+    user_by_id = user_id and (bot or ctx) and not member_only
     by_str = user_str and ctx
     if not (member_by_id or user_by_id or by_str):
-        raise MissingArgument('Requires (user_str and ctx) or (user_id and (bot or ctx or guild))')
+        raise errors.MissingArgument('Requires (user_str and ctx) or (user_id and (bot or ctx or guild))')
 
     warning_ = False
 
@@ -312,15 +339,93 @@ async def get_member(
         try:
             return await bot.fetch_user(user_id)
         except discord.NotFound:
-            raise NotUser(f'`{user_id}` is not user!')
+            raise errors.NotUser(f'`{user_id}` is not user!')
 
     if by_str:  # user_str and ctx
         try:
             return await commands.MemberConverter().convert(ctx, user_str)
         except (commands.CommandError, commands.BadArgument):
-            raise WarningExtension(None, f'Cannot convert `{user_str}` to server member')
+            raise errors.WarningExtension(None, f'Cannot convert `{user_str}` to server member')
 
     # Info passed down from `if member_by_id`
     if warning_:
-        raise WarningExtension(*warning_)
+        raise errors.WarningExtension(*warning_)
 
+
+def __is_staff(ctx, role_ids):
+    output = False
+    if ctx.author == ctx.guild.owner:
+        output = True
+
+    for role in ctx.author.roles:
+        if role.permissions.administrator:
+            output = True
+        elif role.id in role_ids:
+            output = True
+    return output
+
+def is_staff(ctx):
+    role_ids = config['giveaway_role_ids']
+    role_ids.extend(config['mod_role_ids'])
+    return __is_staff(ctx, role_ids)
+
+def is_giveaway_staff(ctx):
+    return __is_staff(ctx, config['giveaway_role_ids'])
+
+def is_mod_staff(ctx):
+    return __is_staff(ctx, config['mod_role_ids'])
+
+def is_bot_owner(ctx):
+    return ctx.author.id == 468631903390400527
+
+def to_seconds(duration: str) -> int:
+    """
+    Takes a string and converts it into seconds
+    String must either be an integer or have digit(s) followed by one or multiple of the following characters:
+    s, m, h, d, w (denoting to seconds, minutes, hours, days, weeks)
+
+    The duration param will be returned if its value is an integer
+
+    :param duration: (str) string of time with units of s, m, h, d,w
+    :return: (int) seconds
+    """
+    try:
+        return int(duration)
+    except ValueError:
+        pass
+    disallowed = re.findall('[^ 0-9smhdw]', duration.strip())
+    if disallowed:
+        if len(disallowed) == 1:
+            disallowed = disallowed[0]
+        raise errors.DisallowedChars(
+            f'Disallowed characters found in duration of giveaway: `{disallowed}`\n'
+            f'Must have digit(s) followed by s, m, h, d or w'
+        )
+
+    TO_SECONDS_MULTIPLIER = {
+        's': 1,
+        'm': 60,
+        'h': 3600,
+        'd': 86400,
+        'w': 604800
+    }
+    matched_units = {}
+    seconds = 0
+    matches = re.findall(f'(\d*)([{"".join([unit for unit in TO_SECONDS_MULTIPLIER])}])', duration, re.IGNORECASE)
+    for match_ in matches:
+        num, unit = match_
+        if (not num) and unit:
+            raise errors.NoPrecedingValue(
+                'Unit must be immediately preceded by an integer\n'
+                f'Found unit `{unit}` with no preceding integer'
+            )
+        if unit in matched_units:
+            raise errors.DuplicateUnit(
+                'Cannot have more than 1 match of same unit in duration of giveaway\n'
+                f'Found: `{["".join(re_match) for re_match in matches]}`'
+            )
+        else:
+            matched_units[unit] = None
+            seconds += int(num) * TO_SECONDS_MULTIPLIER[unit]
+
+    return seconds

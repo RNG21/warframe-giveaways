@@ -97,10 +97,10 @@ class Giveaways(commands.Cog):
             [winner_amount] - amount of new winners
         """
         message_id, winner_amount = parse.get_args(ctx.message.content, return_length=2, required=1)
-        if winner_amount is None:
+        if not winner_amount:
             winner_amount = 1
         elif not winner_amount.isdigit():
-            raise errors.CustomError(f'Winner amount must be integer, got `{winner_amount}` instead')
+            raise errors.CustomError(f'Winner amount must be positive integer, got `{winner_amount}` instead')
         else:
             winner_amount = int(winner_amount)
 

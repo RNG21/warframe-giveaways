@@ -329,9 +329,9 @@ async def get_user(
                 return await guild.fetch_member(user_id)  # fetch member within guild
             # Not raising exception in these 2 blocks, 2 more lookup methods to be tried
             except discord.NotFound:
-                warning_ = (None, f'{user_id} is not member of the server!')
+                warning_ = f'{user_id} is not member of the server!'
             except discord.HTTPException:
-                warning_ = (None, f'HTTPException: Unable to fetch user {user_id}')
+                warning_ = f'HTTPException: Unable to fetch user {user_id}'
 
     if user_by_id:  # user_id and (bot or ctx)
         if ctx:
@@ -345,11 +345,11 @@ async def get_user(
         try:
             return await commands.MemberConverter().convert(ctx, user_str)
         except (commands.CommandError, commands.BadArgument):
-            raise errors.WarningExtension(None, f'Cannot convert `{user_str}` to server member')
+            raise errors.MemberNotFoundWarning(f'Cannot convert `{user_str}` to server member')
 
     # Info passed down from `if member_by_id`
     if warning_:
-        raise errors.WarningExtension(*warning_)
+        raise errors.MemberNotFoundWarning(warning_)
 
 
 def __is_staff(ctx, role_ids):

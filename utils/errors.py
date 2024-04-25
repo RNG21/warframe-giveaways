@@ -57,9 +57,12 @@ class NotUser(CustomError):
 class MissingArgument(CustomError):
     """Raised when insufficient arguments were provided"""
 
+class CustomWarning(CustomError):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, type_='warning', **kwargs)
 
-class WarningExtension(CustomError):
-    """Warning extended with an attribute to pass on values"""
-    def __init__(self, object_, *args):
-        self.object = object_
+class MemberNotFoundWarning(CustomWarning):
+    """Raised when member is not found in guild"""
+    def __init__(self, *args, holder = None):
+        self.holder = holder
         super().__init__(*args, type_='warning')

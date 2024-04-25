@@ -161,7 +161,7 @@ class Giveaways(commands.Cog):
                        {s, m, h, d, w} (denoting to seconds, minutes, hours, days, weeks respectively)
             winners - amount of winners on the giveaway
             title - the prize and title of the giveaway
-            description - Description of the giveaway, this will be the prize if title is not provided
+            description - Description of the giveaway
             holder - Specify a holder for this giveaway, will display the command user as the host if omitted
         """
 
@@ -215,8 +215,8 @@ class Giveaways(commands.Cog):
         # Find holder
         try:
             giveaway.holder = await user_to_holder(ctx=ctx, user_str=holder)
-        except errors.WarningExtension as e:
-            giveaway.holder = e.object
+        except errors.MemberNotFoundWarning as e:
+            giveaway.holder = e.holder
             await ctx.reply(embed=e.embed, delete_after=120)
 
         # Set prize & description
@@ -574,10 +574,10 @@ async def user_to_holder(ctx: commands.Context, user_str: str) -> template.Holde
         member = await template.get_user(ctx=ctx, user_id=id_, user_str=user_str)
         holder.populate(member, f'Contact {str(member)} to claim your prize')
         return holder
-    except errors.WarningExtension as e:
+    except errors.MemberNotFoundWarning as e:
         # Set holder to author if member not found
         holder.populate(ctx.author, f'Hosted by: {str(ctx.author)}')
-        raise errors.WarningExtension(holder, f'{e.message}\nItem holder has been set to command author.')
+        raise errors.MemberNotFoundWarning(f'{e.message}\nItem holder has been set to command author.', holder=holder)
     except errors.MissingArgument:  # Holder not given in command
         holder.populate(ctx.author, f'Hosted by: {str(ctx.author)}')
         return holder

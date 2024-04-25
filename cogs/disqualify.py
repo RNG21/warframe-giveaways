@@ -5,7 +5,7 @@ import discord
 from discord.ext import tasks, commands
 from pymongo.errors import DuplicateKeyError
 
-from utils import template
+from utils import template, errors
 from utils import mongodb as db
 from utils import parse_commands as parse
 
@@ -88,7 +88,9 @@ class Disqualify(commands.Cog):
     async def check_dq_end(self):
         documents = db.collection.dq.find(None, True)  # Returns all result in collection as list
         for document in documents:
-            print(document['ending'] < time.time())
             if document['ending'] < time.time():
-                member = await template.get_user(guild=self.guild, user_id=document['_id'])
+                try:
+                    member = await template.get_user(guild=self.guild, user_id=document['_id'])
+                except errors.CustomWarning:
+                    continue
                 await self.un_dq(member)

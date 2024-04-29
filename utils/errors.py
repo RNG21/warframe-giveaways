@@ -1,4 +1,4 @@
-from typing import Union, Literal
+from typing import Literal
 
 from utils import template
 
@@ -37,24 +37,28 @@ class CustomError(Exception):
         else:
             self.__embed = template.warning(message)
 
-
 class DuplicateUnit(CustomError):
     """Raised when duplicate unit found in a giveaway's duration argument"""
-
 
 class DisallowedChars(CustomError):
     """Raised when disallowed characters found in a giveaway's duration argument"""
 
-
 class NoPrecedingValue(CustomError):
     """Raised when no preceding digits are found before a unit in a giveaway's duration argument"""
-
 
 class NotUser(CustomError):
     """Raised when the id given does not represent a user"""
 
+class InvalidArgument(CustomError):
+    """Raised when insufficient arguments were provided"""
 
 class MissingArgument(CustomError):
+    """Raised when insufficient arguments were provided"""
+
+class GiveawayNotFound(CustomError):
+    """Raised when insufficient arguments were provided"""
+
+class MissingPermissions(CustomError):
     """Raised when insufficient arguments were provided"""
 
 class CustomWarning(CustomError):
@@ -65,4 +69,4 @@ class MemberNotFoundWarning(CustomWarning):
     """Raised when member is not found in guild"""
     def __init__(self, *args, holder = None):
         self.holder = holder
-        super().__init__(*args, type_='warning')
+        super().__init__(*args)

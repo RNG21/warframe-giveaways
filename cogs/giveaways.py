@@ -81,7 +81,7 @@ class Giveaways(commands.Cog):
         message_id = parse.get_args(ctx.message.content, return_length=1, required=1)[0]
         document = db.collection.find(message_id)
         if document is None:
-            raise errors.CustomError(f'No active giveaway with ID `{message_id}` found')
+            raise errors.GiveawayNotFound(f'No active giveaway with ID `{message_id}` found')
         document['ending'] = time.time()
         await self.end_giveaway(document)
 
@@ -100,25 +100,25 @@ class Giveaways(commands.Cog):
         if not winner_amount:
             winner_amount = 1
         elif not winner_amount.isdigit():
-            raise errors.CustomError(f'Winner amount must be positive integer, got `{winner_amount}` instead')
+            raise errors.InvalidArgument(f'Winner amount must be positive integer, got `{winner_amount}` instead')
         else:
             winner_amount = int(winner_amount)
 
         # Validate args
         if not message_id:
-            raise errors.CustomError('Missing argument: message id')
+            raise errors.MissingArgument('Missing argument: message id')
 
         # Find db record of giveaway
         document = db.collection.archive.find(message_id)
         if not document:
-            raise errors.CustomError(f'Unable to find giveaway with id `{message_id}`.\n')
+            raise errors.GiveawayNotFound(f'Unable to find giveaway with id `{message_id}`.\n')
 
         # Get message to retrieve reactions
         channel = await template.get_channel(self.bot, document['path'].split('/')[1])
         try:
             message = await channel.fetch_message(message_id)
         except discord.errors.NotFound:
-            raise errors.CustomError('Giveaway not found!')
+            raise errors.GiveawayNotFound('Giveaway not found!')
 
         # draw winner and send result
         winners = await draw_winner(
@@ -178,7 +178,7 @@ class Giveaways(commands.Cog):
             else:
                 valid.append(arg)
         if len(invalid) > 2:
-            raise errors.CustomError(
+            raise errors.MissingArgument(
                 "Command requires at least 3 arguments `(duration, winners, title, [description], [holder])`\n"
                 f"Found {len(valid)} arguments: `{valid}`\n"
                 f"Example usage: `{correct_usage}`\n"
@@ -206,9 +206,9 @@ class Giveaways(commands.Cog):
         else:
             winners_match = re.findall('^(\d*)w', winners)
             if not winners_match:
-                raise errors.CustomError(f'Winner amount not found\nCorrect usage: {correct_usage}')
+                raise errors.InvalidArgument(f'Winner amount not found\nCorrect usage: {correct_usage}')
             elif len(winners_match) > 1:
-                raise errors.CustomError(
+                raise errors.InvalidArgument(
                     f'Multiple winner amounts found: {winners_match}\nCorrect usage: {correct_usage}')
             giveaway.winners = int(winners_match[0])
 
@@ -225,7 +225,7 @@ class Giveaways(commands.Cog):
         # Validate
         if giveaway.prize is not None:  # Can't len(None)
             if len(giveaway.prize) > 256:
-                raise errors.CustomError('Giveaway prize (title) length must not be longer than 256\n'
+                raise errors.InvalidArgument('Giveaway prize (title) length must not be longer than 256\n'
                                          f'```\n{giveaway.prize}```Is {len(giveaway.prize)} characters')
 
         # Send giveaway
@@ -256,7 +256,7 @@ class Giveaways(commands.Cog):
                     delete_after=delete_after
                 )
             else:
-                raise errors.CustomError(f'I need `Send Messages` permission at {ctx.channel.mention}')
+                raise errors.MissingPermissions(f'I need `Send Messages` permission at {ctx.channel.mention}')
 
         # Add to running giveaways if ending after self.check_end_interval minutes
         server_id, channel_id, message_id = giveaway.message.jump_url.split('/')[-3:]

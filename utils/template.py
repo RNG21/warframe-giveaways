@@ -7,9 +7,7 @@ from discord import User, Member
 from discord.ext import commands
 
 from utils import errors
-
-with open('config.json', encoding='utf-8') as file:
-    config = json.load(file)
+import config
 
 
 class Holder(object):
@@ -146,7 +144,7 @@ def __contact_type__(holder: Holder) -> dict:
         return {'name': 'Item Holder:', 'value': contact, 'inline': True}
 
 
-def winner_guide(prize, description, giveaway_link, holder_tag):
+def winner_guide(prize, description, giveaway_link, holder_tag) -> discord.Embed:
     if description is None:
         description = ''
     if prize is None:
@@ -351,7 +349,6 @@ async def get_user(
     if warning_:
         raise errors.MemberNotFoundWarning(warning_)
 
-
 def __is_staff(ctx, role_ids):
     output = False
     if ctx.author == ctx.guild.owner:
@@ -365,15 +362,15 @@ def __is_staff(ctx, role_ids):
     return output
 
 def is_staff(ctx):
-    role_ids = config['giveaway_role_ids']
-    role_ids.extend(config['mod_role_ids'])
+    role_ids = config.giveaway_role_ids
+    role_ids.extend(config.mod_role_ids)
     return __is_staff(ctx, role_ids)
 
 def is_giveaway_staff(ctx):
-    return __is_staff(ctx, config['giveaway_role_ids'])
+    return __is_staff(ctx, config.giveaway_role_ids)
 
 def is_mod_staff(ctx):
-    return __is_staff(ctx, config['mod_role_ids'])
+    return __is_staff(ctx, config.mod_role_ids)
 
 def is_bot_owner(ctx):
     return ctx.author.id == 468631903390400527

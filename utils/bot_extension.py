@@ -1,12 +1,7 @@
-import json
-
 from discord.ext import commands
 
+import config
 from utils import template
-
-
-with open('config.json', encoding='utf-8') as file:
-    config = json.load(file)
 
 
 class BotExtension(commands.Bot):
@@ -20,4 +15,4 @@ class BotExtension(commands.Bot):
         await self.wait_until_ready()
         self.owner = await template.get_user(bot=self, user_id=468631903390400527)
         if config.get('log_channel_id'):
-            self.log_channel = await template.get_channel(bot=self, channel_id=config['log_channel_id'])
+            self.log_channel = await template.get_channel(bot=self, channel_id=config.log_channel_id)

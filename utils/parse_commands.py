@@ -1,18 +1,8 @@
 import re
-import json
 from typing import Union, List
 
-from discord.ext import commands
-
 from utils import errors
-
-if __name__ == '__main__':
-    import os.path
-    with open(os.path.dirname(__file__) + '/../config.json', encoding='utf-8') as file:
-        config = json.load(file)
-else:
-    with open('config.json', encoding='utf-8') as file:
-        config = json.load(file)
+import config
 
 
 class IncorrectCommandFormat(Exception):
@@ -20,8 +10,8 @@ class IncorrectCommandFormat(Exception):
 
 
 def get_args(content: str,
-             arg_delimiter: str = config['arg_delimiter'],
-             prefixes: List[str] = config['prefix'],
+             arg_delimiter: str = config.arg_delimiter,
+             prefixes: List[str] = config.prefix,
              return_length: int = None,
              required: int = 0,
              join_excess: bool = False,

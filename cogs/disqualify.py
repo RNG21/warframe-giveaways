@@ -1,5 +1,4 @@
 import time
-import json
 
 import discord
 from discord.ext import tasks, commands
@@ -8,9 +7,7 @@ from pymongo.errors import DuplicateKeyError
 from utils import template, errors
 from utils import mongodb as db
 from utils import parse_commands as parse
-
-with open('config.json', encoding='utf-8') as file:
-    config = json.load(file)
+import config
 
 async def setup(bot):
     await bot.wait_until_ready()
@@ -20,16 +17,15 @@ class Disqualify(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.guild = bot.get_guild(config['guild_id'])
-        self.dq_role = self.guild.get_role(config['disqualified_role_id'])
+        self.guild = bot.get_guild(config.guild_id)
+        self.dq_role = self.guild.get_role(config.disqualified_role_id)
         self.check_dq_end.start()
-        # declaring to keep linter happy
         self.mod_log_channel = None
         self.log_channel = None
 
     async def cog_load(self):
-        self.mod_log_channel = await template.get_channel(self.bot, config['mod_log_channel_id'])
-        self.log_channel = await template.get_channel(self.bot, config['log_channel_id'])
+        self.mod_log_channel = await template.get_channel(self.bot, config.mod_log_channel_id)
+        self.log_channel = await template.get_channel(self.bot, config.log_channel_id)
 
     @commands.command(name='disqualify', aliases=['dq'])
     async def disqualify(self, ctx):

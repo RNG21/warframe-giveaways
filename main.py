@@ -1,22 +1,16 @@
 import asyncio
 import json
-import traceback
 import aiohttp
 import logging
-import time
 
 import discord
-from discord.ext import tasks, commands
+from discord.ext import commands
 
 from utils import template
 from utils import mongodb as db
 from utils import parse_commands as parse
 from utils.bot_extension import BotExtension
-from utils import errors
-
-# load config
-with open('config.json', encoding='utf-8') as file:
-    config = json.load(file)
+import config
 
 # logging
 async def on_request_start(_, __, params):
@@ -131,4 +125,4 @@ async def setup_hook():
 
 
 if __name__ == '__main__':
-    bot.run(config['token'])
+    bot.run(config.token)

@@ -1,23 +1,19 @@
-import json
 import asyncio
 
 import discord
 from discord.ext import commands
 
 from utils import template
+import config
 
 
 async def setup(bot: commands.Bot):
     """for bot.load_extension"""
-    if config['modmail_channel_id']:
+    if config.modmail_channel_id:
         await bot.wait_until_ready()
         instance = ModMail(bot)
         bot.add_view(StartModmail(instance))
         await bot.add_cog(instance)
-
-
-with open('config.json', encoding='utf-8') as file:
-    config = json.load(file)
 
 class StartModmail(discord.ui.View):
     def __init__(self, modmail_instance):
@@ -36,12 +32,11 @@ class StartModmail(discord.ui.View):
             user_id=interaction.user.id,
             messages=[
                 f'<@{interaction.user.id}>',
-                str([f'<@&{id_}>' for id_ in config["mod_role_ids"]]),
+                str([f'<@&{id_}>' for id_ in config.mod_role_ids]),
                 f'<@{interaction.user.id}>\nDescribe your issue here'
             ]
         )
         await interaction.response.send_message(f'Your ticket: <#{ticket.id}>', ephemeral=True)
-
 
 class ModMail(commands.Cog):
     def __init__(self, bot: commands.Bot = None):
@@ -70,7 +65,7 @@ class ModMail(commands.Cog):
         return False
 
     async def setup(self):
-        self.channel = await template.get_channel(self.bot, config['modmail_channel_id'])
+        self.channel = await template.get_channel(self.bot, config.modmail_channel_id)
 
     async def cog_load(self):
         asyncio.create_task(self.setup())

@@ -1,0 +1,13 @@
+arg_delimiter = ";"
+prefix = ['g-', '-g']
+token = ""  # discord bot token
+connection_string = ""  # mongodb connection string
+giveaway_role_ids = []
+mod_role_ids = []
+modmail_channel_id = None
+giveaway_channels = []
+db_instance = "test"
+log_channel_id = 0
+disqualified_role_id = 0
+mod_log_channel_id = 0
+guild_id = 0

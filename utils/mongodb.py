@@ -1,12 +1,11 @@
-import json
 from typing import Union, Dict, Any
 
 import pymongo
 from bson.objectid import ObjectId
 
-with open(r'config.json', encoding='utf-8') as file:
-    config = json.load(file)
-    conn = config['connection_string']
+import config
+
+conn = config.connection_string
 
 class Local:
     cluster = pymongo.MongoClient("mongodb://localhost:27017/")
@@ -81,7 +80,7 @@ class Dq(Collection):
 instance = {
     'test': TestCloud,
     'production': Cloud
-}[config['db_instance']]
+}[config.db_instance]
 collection = Collection(instance)
 
 if __name__ == '__main__':

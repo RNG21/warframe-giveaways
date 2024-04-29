@@ -15,9 +15,7 @@ from utils import mongodb as db
 from utils import parse_commands as parse
 from utils.bot_extension import BotExtension
 from utils import errors
-
-with open('config.json', encoding='utf-8') as file:
-    config = json.load(file)
+import config
 
 
 async def setup(bot: BotExtension):
@@ -468,7 +466,7 @@ class Giveaways(commands.Cog):
             jump_url: url of original giveaway message
             reroll: True if used for reroll
         """
-        create_ticket = True if channel.id in config['giveaway_channels'] else False
+        create_ticket = True if channel.id in config.giveaway_channels else False
 
         # Send winner notification
         await channel.send(
@@ -510,7 +508,7 @@ class Giveaways(commands.Cog):
         channel = await template.get_channel(self.bot, event.channel_id)
         partial_message = channel.get_partial_message(event.message_id)
         message_link = f'https://discord.com/channels/{event.guild_id}/{event.channel_id}/{event.message_id}'
-        if config['disqualified_role_id'] in [role.id for role in event.member.roles]:
+        if config.disqualified_role_id in [role.id for role in event.member.roles]:
             await partial_message.remove_reaction('🎉', event.member)
             embed = discord.Embed(
                 title='Reaction removed',
@@ -534,8 +532,8 @@ class Giveaways(commands.Cog):
         return allowed
 
     async def cog_load(self):
-        if config['modmail_channel_id']:
-            self.thread_channel = await template.get_channel(self.bot, config['modmail_channel_id'])
+        if config.modmail_channel_id:
+            self.thread_channel = await template.get_channel(self.bot, config.modmail_channel_id)
         self.check_giveaway_end.start()
 
 
